@@ -1,9 +1,13 @@
 import { logger } from "@/utils/logger";
-import { memoryDb } from "../config/database";
+// import { memoryDb } from "../config/database";
 import { PendingGrant } from "@interledger/open-payments";
 
+export const memoryDb = {
+  pendingGrants: new Map<string, PendingGrant>(),
+  finalTokens: new Map<string, string>(),
+};
 export class GrantRepository {
-    public async savePending(
+  public async savePending(
     transactionId: string,
     grant: PendingGrant,
   ): Promise<void> {

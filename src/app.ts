@@ -16,30 +16,55 @@
 import express, { Application, Request, Response, NextFunction } from "express";
 import cors from "cors";
 // import helmet from "helmet";
-import { router } from "./routes/index";
+import { createRouter, router } from "./routes/index";
 import { errorMiddleware } from "./middlewares/error.middleware";
 import { AppError } from "./utils/appError";
 import { httpLogger } from "./middlewares/logger.middleware";
 import { createUserRepository } from "./repositories/user.repository";
-import knexClient from "./config/database";
+import { Knex } from "knex";
+import { createAuthService } from "./services/auth.service";
+import { createAuthController } from "./controllers/auth.controller";
+import { createRequireAuth } from "./middlewares/auth.middleware";
 
 export const app: Application = express();
 
 
-app.use(httpLogger);
-// Middlewares
-// app.use(helmet());
-app.use(cors());
-app.use(express.json());
+export const createApp = (db: Knex): Application => {
+  const app = express();
 
-// Routes
-app.use("/", router);
+  app.use(express.json());
 
-// Catch 404 (Route Not Found) and pass to error handler
-app.use((req: Request, _res: Response, next: NextFunction) => {
-  next(new AppError(`Route ${req.method} ${req.originalUrl} not found`, 404));
-});
+  app.use(httpLogger);
+  // Middlewares
+  // app.use(helmet());
+  app.use(cors());
+  app.use(express.json());
 
-app.use(errorMiddleware);
+  const userRepository = createUserRepository(db);
 
-// export { app };
+  const authService = createAuthService({
+    userRepository
+  });
+
+  const authController = createAuthController({
+    authService
+  })
+
+  const requireAuth = createRequireAuth({
+    userRepository,
+  });
+
+  // Routes
+  app.use("/", createRouter({
+    authController,
+    requireAuth
+  }));
+
+  // Catch 404 (Route Not Found) and pass to error handler
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    next(new AppError(`Route ${req.method} ${req.originalUrl} not found`, 404));
+  });
+
+  app.use(errorMiddleware);
+  return app;
+}

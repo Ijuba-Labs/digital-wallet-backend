@@ -10,16 +10,16 @@ const knexConfig: { [key: string]: Knex.Config } = {
     connection: process.env.DATABASE_URL,
   },
 
-  test: {
-    client: "postgresql",
-    connection: {
-      host: env.DB_HOST,
-      port: env.DB_TEST_PORT,
-      user: env.DB_USER,
-      password: env.DB_PASSWORD,
-      database: env.TEST_DB_NAME,
-    },
-  },
+  // test: {
+  //   client: "postgresql",
+  //   connection: {
+  //     host: env.DB_HOST,
+  //     port: env.DB_TEST_PORT,
+  //     user: env.DB_USER,
+  //     password: env.DB_PASSWORD,
+  //     database: env.TEST_DB_NAME,
+  //   },
+  // },
 
   staging: {
     client: "postgresql",

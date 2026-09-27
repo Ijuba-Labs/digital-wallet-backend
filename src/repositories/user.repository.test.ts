@@ -1,48 +1,26 @@
 import { describe, expect, jest, it, beforeAll, afterAll } from "@jest/globals";
-import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import knex, { Knex } from "knex";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { createUser as createTestUser } from "@/database/seeds/factories/user.factory";
+import { Knex } from "knex";
 import { createUserRepository } from "./user.repository";
-// import { userRepository } from ".";
+import { createTestDatabase } from "../../tests/database";
 
 describe("User Repository", () => {
-  jest.setTimeout(60000);
-
-  let postgresContainer: Awaited<ReturnType<PostgreSqlContainer["start"]>>;
-  let knexClient: Knex;
-  let userRepository: ReturnType<typeof createUserRepository>;
+  let db: Knex;
 
   beforeAll(async () => {
-    const container = await new PostgreSqlContainer("postgres:13.3-alpine").start();
-    postgresContainer = container;
+    db = await createTestDatabase();
+  });
 
-    knexClient = knex({
-      client: "postgresql",
-      connection: container.getConnectionUri(),
-    })
-
-    userRepository = createUserRepository(knexClient);
-
-    const schemaPath = path.resolve(
-      process.cwd(),
-      "src/database/schema.sql"
-    );
-
-    const schema = await fs.readFile(schemaPath, "utf8");
-
-    await knexClient.raw(schema);
-
+  afterEach(async () => {
+    await db("users").del();
   });
 
   afterAll(async () => {
-    await knexClient.destroy();
-    await postgresContainer.stop();
+    await db.destroy();
   });
 
-
   it("should create and return a new user", async () => {
+    const userRepository = createUserRepository(db);
     const testUser = createTestUser();
 
 
@@ -57,15 +35,18 @@ describe("User Repository", () => {
   });
 
   it("should find user by email", async () => {
-    const testUser = createTestUser();
+    const userRepository = createUserRepository(db);
+    const testUser = createTestUser()
 
     await userRepository.save(testUser);
-    const dbUser = await userRepository.findByEmail(testUser.email);
+    const user = await userRepository.findByEmail(testUser.email);
 
-    expect(dbUser.email).toEqual(testUser.email);
+    expect(user).toBeDefined();
+    expect(user.email).toBe(testUser.email);
   });
 
   it("should find user by id", async () => {
+    const userRepository = createUserRepository(db);
     const testUser = createTestUser();
     const userId = testUser.id as string;
 

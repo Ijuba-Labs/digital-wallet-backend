@@ -1,5 +1,11 @@
 /** @type {import('jest').Config} */
+
+process.env = Object.assign(process.env, {
+  DISABLE_LOGGER: "true",
+});
+
 module.exports = {
+  verbose: true,
   testEnvironment: "node",
 
   transform: {
@@ -39,4 +45,19 @@ module.exports = {
     "lcov",
     "json-summary"
   ],
+
+  globalSetup: "<rootDir>/tests/setup.ts",
+  globalTeardown: "<rootDir>/tests/teardown.ts",
+
+  collectCoverageFrom: [
+    "src/**/*.{ts,tsx}",
+
+    "!src/**/*.d.ts",
+    "!src/**/index.ts"
+  ],
+
+  coveragePathIgnorePatterns: [
+    "/node_modules/",
+    "/tests/"
+  ]
 };

@@ -9,15 +9,20 @@
  * 4. Catch `uncaughtException` and `unhandledRejection` to log critical failures before exiting cleanly.
  */
 import http from "node:http";
-import { app } from "./app";
+// import { app } from "./app";
 import { env } from "./config/env";
 import { logger } from "./utils/logger";
 import { connectRedis, disconnectRedis } from "./config/redis";
+import { createApp } from "./app";
+import knexClient from "./config/database";
+
+const app = createApp(knexClient);
 
 const server = http.createServer(app);
 
 async function startServer(): Promise<void> {
   try {
+
     await connectRedis();
 
     server.listen(env.PORT, () => {
