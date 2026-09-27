@@ -12,7 +12,7 @@ import dotenv from "dotenv";
 import { z } from "zod";
 
 // Load variables from .env file into process.env
-dotenv.config({ debug: true });
+dotenv.config({ debug: false });
 // Define the schema with types and default values
 const envSchema = z.object({
   NODE_ENV: z

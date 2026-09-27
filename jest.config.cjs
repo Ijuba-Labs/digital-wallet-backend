@@ -46,6 +46,7 @@ module.exports = {
     "json-summary"
   ],
 
+  setupFiles: ["<rootDir>/tests/env.setup.ts"],
   globalSetup: "<rootDir>/tests/setup.ts",
   globalTeardown: "<rootDir>/tests/teardown.ts",
 
