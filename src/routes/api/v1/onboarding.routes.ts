@@ -1,21 +1,27 @@
-import { Router } from "express";
-import { onboardingController } from "@/controllers/onboarding.controller";
+import type { PaymentRateLimits } from "@/middlewares/rateLimiter.middleware";
+import { Router, RequestHandler } from "express";
+import type { OnboardingController } from "@/controllers/onboarding.controller";
 
-const router = Router();
+export const createOnboardingRouter = (requireAuth: RequestHandler, onboardingController: OnboardingController,
+  limits: PaymentRateLimits) => {
+  const router = Router();
 
-// Step 1: Start onboarding — resolve wallet address
-router.post("/start", onboardingController.startOnboarding);
+  router.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    next();
+  });
 
-// Step 2: Request user consent — returns redirect URL
-router.post("/:sessionId/consent", onboardingController.requestConsent);
+  // The authorization server calls back without the app's bearer token.
+  router.get("/callback", limits.callback, onboardingController.handleCallback);
 
-// Step 3: GNAP callback — called by auth server after user approves
-router.get("/callback", onboardingController.handleCallback);
+  router.use(requireAuth);
+  router.post("/start", onboardingController.startOnboarding);
+  router.post("/:sessionId/consent", onboardingController.requestConsent);
+  router.get("/:sessionId/status", onboardingController.getStatus);
+  router.get("/success", onboardingController.getStatus);
 
-// Status: Poll session state from the frontend
-router.get("/:sessionId/status", onboardingController.getStatus);
-
-router.get("/success", onboardingController.getStatus);
-
-
-export { router as onboardingRouter };
+  return router;
+};

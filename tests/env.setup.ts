@@ -4,6 +4,9 @@ Object.assign(process.env, {
   NODE_ENV: "test",
   CORS_ORIGIN: "http://localhost:3000",
   HOST: "http://localhost:9000",
+  API_PUBLIC_URL: "http://localhost:9001",
+  ONBOARDING_WEB_RETURN_URL: "https://app.example.com/onboarding/return",
+  ONBOARDING_MOBILE_RETURN_URL: "https://links.example.com/onboarding/return",
   FRONTEND_URL: "http://localhost:3000",
   REDIRECT_URL: "http://localhost:3000/callback",
   LOG_LEVEL: "error",
@@ -40,5 +43,6 @@ Object.assign(process.env, {
   MOCK_USERS_COUNT: "0",
   SEED_USERS: "1",
   JWT_SECRET: "test-only-secret-at-least-16-characters",
+  GRANT_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   ACCESS_TOKEN_EXPIRES_IN: "15m",
 });

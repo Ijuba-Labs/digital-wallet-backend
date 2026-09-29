@@ -1,306 +1,150 @@
-import { v4 as uuidv4 } from "uuid";
+import { randomBytes, randomUUID } from "node:crypto";
+import { isPendingGrant, isFinalizedGrantWithSubject, OpenPaymentsClientError } from "@interledger/open-payments";
 import { AppError } from "@/utils/appError";
-import { logger } from "@/utils/logger";
-import { getOpenPaymentsClient } from "@/utils/open-payment";
-import { onboardingRepository } from "@/repositories/onboarding.repository";
-import { grantRepository } from "@/repositories/grant.repository";
-import {
-  OnboardingStatus,
-  OnboardingStatusType,
-  VALID_TRANSITIONS,
-  SESSION_TTL_MS,
-} from "@/constants/onboarding";
-import {
-  OnboardingSession,
-  OnboardingStartInput,
-  OnboardingStatusResponse,
-} from "@/types/onboarding";
-import { Grant, PendingGrant } from "@interledger/open-payments";
+import { SESSION_TTL_MS } from "@/constants/onboarding";
+import type { OnboardingServiceDependencies, OnboardingSession, OnboardingStartInput, OnboardingStatusResponse, OnboardingCallbackResult } from "@/types/onboarding";
+import type { FinalizedOwnership } from "@/types/grant";
+import { callbackFingerprint, verifyInteractionHash } from "@/utils/grant-interaction";
+import { getOnboardingReturnUrl } from "@/config/onboarding";
+import { validateProviderUrl } from "@/utils/provider-url";
 
-class OnboardingService {
-  // ─────────────────────────────────────────────
-  // Step 1: Start onboarding — resolve wallet
-  // ─────────────────────────────────────────────
+export class OnboardingService {
+  constructor(private readonly deps: OnboardingServiceDependencies) {}
   async start(input: OnboardingStartInput): Promise<OnboardingStatusResponse> {
-    const { walletAddressUrl, userId } = input;
-
-    // Guard: prevent duplicate active sessions for the same user
-    const existing = await onboardingRepository.findActiveByUserId(userId);
+    const clientId = input.clientId ?? "api";
+    const returnUrl = getOnboardingReturnUrl(this.deps.config, clientId);
+    const existing = await this.deps.onboardingRepository.findActiveByUserId(input.userId);
     if (existing) {
-      logger.warn({ userId, sessionId: existing.id }, "Active session exists");
-      // Return existing session instead of creating a new one
-      return this.toResponse(existing);
+      if (existing.walletAddressUrl !== input.walletAddressUrl || existing.clientId !== clientId || existing.returnUrl !== returnUrl) throw new AppError("An onboarding session is already active", 409);
+      return this.response(existing);
     }
-    // Create the session in PENDING state
-    const session: OnboardingSession = {
-      id: `onb_${uuidv4()}`,
-      userId,
-      walletAddressUrl,
-      status: OnboardingStatus.PENDING,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    await onboardingRepository.save(session);
-
-    // Resolve the wallet address via Open Payments
+    validateProviderUrl(input.walletAddressUrl);
+    const now = new Date();
+    const session: OnboardingSession = { id: `onb_${randomUUID()}`, userId: input.userId, walletAddressUrl: input.walletAddressUrl,
+      clientId, returnUrl, status: "PENDING", createdAt: now, updatedAt: now };
+    await this.deps.onboardingRepository.save(session);
+    let phase: "client_setup" | "wallet_lookup" | "provider_url_validation" | "session_persistence" = "client_setup";
     try {
-      const client = await getOpenPaymentsClient();
-      const wallet = await client.walletAddress.get({ url: walletAddressUrl });
-
-      // Transition: PENDING → WALLET_RESOLVED
-      const updated = await this.transitionTo(
-        session.id,
-        OnboardingStatus.WALLET_RESOLVED,
-        { wallet },
-      );
-      return this.toResponse(updated);
+      const client = await this.deps.getOpenPaymentsClient();
+      phase = "wallet_lookup";
+      const resolved = await client.walletAddress.get({ url: input.walletAddressUrl });
+      phase = "provider_url_validation";
+      for (const url of [resolved.id, resolved.authServer, resolved.resourceServer]) validateProviderUrl(url);
+      const wallet = { id: resolved.id, assetCode: resolved.assetCode, assetScale: resolved.assetScale,
+        authServer: resolved.authServer, resourceServer: resolved.resourceServer, publicName: resolved.publicName };
+      phase = "session_persistence";
+      return this.response(await this.deps.onboardingRepository.transition(session.id, "PENDING", { status: "WALLET_RESOLVED", wallet }));
     } catch (error) {
-      // Transition: PENDING → FAILED
-      await this.transitionTo(session.id, OnboardingStatus.FAILED, {
-        failureReason:
-          error instanceof Error
-            ? error.message
-            : "Failed to resolve wallet address",
-      });
-
-      throw new AppError(
-        `Could not resolve wallet address: ${walletAddressUrl}`,
-        422,
-      );
+      const nodeCode = error instanceof Error && "code" in error ? error.code : undefined;
+      const reason = phase === "client_setup" && ["ENOENT", "EACCES", "EPERM"].includes(String(nodeCode))
+        ? "private_key_unavailable"
+        : error instanceof OpenPaymentsClientError ? "provider_rejected_request"
+          : phase === "wallet_lookup" && ["ENOTFOUND", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT"].includes(String(nodeCode))
+            ? "provider_network_error"
+            : phase === "provider_url_validation" ? "provider_url_rejected" : `${phase}_failed`;
+      this.deps.logger.warn({ event: "onboarding_wallet_resolution_failed", sessionId: session.id, phase, reason,
+        ...(error instanceof OpenPaymentsClientError && Number.isInteger(error.status) ? { providerStatus: error.status } : {}) },
+      "Could not resolve wallet");
+      await this.fail(session, "Could not resolve wallet");
+      throw new AppError("Could not resolve wallet", 422);
     }
   }
-
-  // ─────────────────────────────────────────────
-  // Step 2: Request consent — GNAP grant
-  // ─────────────────────────────────────────────
-  async requestConsent(sessionId: string): Promise<OnboardingStatusResponse> {
-    const session = await this.getValidSession(sessionId);
-
-    // Guard: must be in WALLET_RESOLVED state
-    if (session.status !== OnboardingStatus.WALLET_RESOLVED) {
-      throw new AppError(
-        `Cannot request consent: session is in '${session.status}' state. Expected 'WALLET_RESOLVED'.`,
-        409,
-        { state: session.status },
-      );
-    }
-
-    const client = await getOpenPaymentsClient();
-
-    const userWalletAddress = await client.walletAddress.get({
-      url: session.walletAddressUrl,
-    });
-
-    // Build the redirect URL with session ID for the callback
-    const callbackUrl = `${process.env.HOST}/api/v1/onboarding/callback?session_id=${sessionId}`;
-    console.log("auth server:", session.wallet!.authServer);
+  async requestConsent(id: string, userId: string): Promise<OnboardingStatusResponse> {
+    const s = await this.validSession(id, userId);
+    if (s.status === "CONSENT_PENDING") return this.response(s);
+    if (s.status !== "WALLET_RESOLVED") throw new AppError("Session is not ready for consent", 409);
+    const claimed = await this.deps.onboardingRepository.transition(id, s.status, { status: "CONSENT_REQUESTING" });
     try {
-      const grant = (await client.grant.request(
-        {
-          url: userWalletAddress.authServer,
-        },
-        {
-          access_token: {
-            access: [
-              {
-                type: "incoming-payment",
-                actions: ["create", "read", "list"],
-              },
-              {
-                type: "quote",
-                actions: ["create", "read"],
-              },
-              {
-                type: "outgoing-payment",
-                actions: ["create", "read", "list"],
-                identifier: session.walletAddressUrl,
-              },
-            ],
-          },
-          subject: {
-            sub_ids: [
-              {
-                id: userWalletAddress.id,
-                format: "uri",
-              },
-            ],
-          },
-          interact: {
-            start: ["redirect"],
-            finish: {
-              method: "redirect",
-              uri: callbackUrl, // where to redirect the user to after they've completed the interaction
-              nonce: "123",
-            },
-          },
-        },
-      )) as PendingGrant;
-
-      // Store grant continuation data for the callback
-      const updated = await this.transitionTo(
-        sessionId,
-        OnboardingStatus.CONSENT_PENDING,
-        {
-          grantContinueToken: grant.continue.access_token.value,
-          grantContinueUri: grant.continue.uri,
-          redirectUrl: grant.interact.redirect,
-        },
-      );
-
-      // Also save to grant repository for backward compat
-      await grantRepository.savePending(sessionId, grant);
-
-      return this.toResponse(updated);
-    } catch (error) {
-      await this.transitionTo(sessionId, OnboardingStatus.FAILED, {
-        failureReason:
-          error instanceof Error ? error.message : "Grant request failed",
+      const client = await this.deps.getOpenPaymentsClient();
+      const callback = new URL("/api/v1/onboarding/callback", this.deps.config.apiPublicUrl);
+      callback.searchParams.set("session_id", id);
+      const clientNonce = randomBytes(32).toString("base64url");
+      // The SDK sends new URL(url).href; use that exact URI in the GNAP hash.
+      const grantRequestUrl = new URL(s.wallet!.authServer).href;
+      const pendingGrant = await client.grant.request({ url: grantRequestUrl }, {
+        subject: { sub_ids: [{ id: s.wallet!.id, format: "uri" }] },
+        interact: { start: ["redirect"], finish: { method: "redirect", uri: callback.href, nonce: clientNonce } },
       });
-      throw new AppError("Failed to request wallet consent", 502);
+      if (!isPendingGrant(pendingGrant)) throw new AppError("Expected interactive ownership verification", 502);
+      validateProviderUrl(pendingGrant.continue.uri); validateProviderUrl(pendingGrant.interact.redirect);
+      return this.response(await this.deps.onboardingRepository.transition(id, "CONSENT_REQUESTING", {
+        status: "CONSENT_PENDING", pendingGrant, redirectUrl: pendingGrant.interact.redirect,
+        continueAfter: Date.now() + (pendingGrant.continue.wait ?? 0) * 1000,
+        interaction: { clientNonce, serverInteractNonce: pendingGrant.interact.finish, grantRequestUrl },
+      }));
+    } catch {
+      await this.fail(claimed, "Failed to request consent"); throw new AppError("Failed to request consent", 502);
     }
   }
-
-  // ─────────────────────────────────────────────
-  // Step 3: Handle callback — finalize grant
-  // ─────────────────────────────────────────────
-  async handleCallback(
-    sessionId: string,
-    interactRef: string,
-  ): Promise<OnboardingStatusResponse> {
-    const session = await this.getValidSession(sessionId);
-
-    // Guard: must be in CONSENT_PENDING state
-    if (session.status !== OnboardingStatus.CONSENT_PENDING) {
-      throw new AppError(
-        `Cannot finalize: session is in '${session.status}' state. Expected 'CONSENT_PENDING'.`,
-        409,
-      );
+  async handleCallback(id: string, interactRef: string, hash: string): Promise<OnboardingCallbackResult> {
+    const fingerprint = callbackFingerprint(interactRef, hash);
+    const durable = await this.deps.grantRepository.getFinalized(id);
+    if (durable) {
+      if (durable.callbackFingerprint !== fingerprint) throw new AppError("Callback proof mismatch", 400);
+      return this.completedCallback(id, durable);
     }
-
-    if (!session.grantContinueToken || !session.grantContinueUri) {
-      throw new AppError("Session is missing grant continuation data", 500);
-    }
-
-    const client = await getOpenPaymentsClient();
-
+    const s = await this.deps.onboardingRepository.findById(id);
+    if (!s || Date.now() >= s.createdAt.getTime() + SESSION_TTL_MS) throw new AppError("Onboarding expired", 410);
+    if (!s.interaction) throw new AppError("Onboarding interaction state unavailable", 400);
+    if (!verifyInteractionHash(s.interaction, interactRef, hash)) throw new AppError("Invalid onboarding callback", 400);
+    if (s.callbackFingerprint && s.callbackFingerprint !== fingerprint) throw new AppError("Interaction consumed", 409);
+    if (s.status === "FINALIZING") return { sessionId: id, status: "FINALIZING", returnUrl: null };
+    if (s.status !== "CONSENT_PENDING" || !s.pendingGrant) throw new AppError("Consent unavailable", 409);
+    if (Date.now() < (s.continueAfter ?? 0)) return { sessionId: id, status: "FINALIZING", returnUrl: null };
+    const claimed = await this.deps.onboardingRepository.transition(id, "CONSENT_PENDING", { status: "FINALIZING", callbackFingerprint: fingerprint });
     try {
-      const finalizedGrant: Grant = await client.grant.continue(
-        {
-          accessToken: session.grantContinueToken,
-          url: session.grantContinueUri,
-        },
-        { interact_ref: interactRef },
-      );
-      // Transition: CONSENT_PENDING → COMPLETED
-      const updated = await this.transitionTo(
-        sessionId,
-        OnboardingStatus.COMPLETED,
-        {
-          accessToken: finalizedGrant.continue.access_token.value,
-          completedAt: new Date(),
-          // Clean up sensitive continuation data
-          grantContinueToken: undefined,
-          grantContinueUri: undefined,
-          redirectUrl: undefined,
-        },
-      );
-
-      // Clean up pending grant
-      await grantRepository.deletePending(sessionId);
-
-      // Persist the final access token linked to the user
-      await grantRepository.saveFinalToken(
-        session.userId,
-        finalizedGrant.continue.access_token.value,
-      );
-
-      logger.info(
-        { sessionId, userId: session.userId },
-        "[Onboarding] Wallet linked successfully",
-      );
-
-      return this.toResponse(updated);
-    } catch (error) {
-      await this.transitionTo(sessionId, OnboardingStatus.FAILED, {
-        failureReason:
-          error instanceof Error ? error.message : "Grant finalization failed",
-      });
-      throw new AppError("Failed to finalize wallet consent", 502);
+      const client = await this.deps.getOpenPaymentsClient();
+      const grant = await client.grant.continue({ url: s.pendingGrant.continue.uri, accessToken: s.pendingGrant.continue.access_token.value },
+        s.interactionSent ? undefined : { interact_ref: interactRef });
+      if (!isFinalizedGrantWithSubject(grant)) {
+        if (!grant.continue) throw new AppError("Ownership verification missing", 502);
+        validateProviderUrl(grant.continue.uri);
+        await this.deps.onboardingRepository.transition(id, "FINALIZING", { status: "CONSENT_PENDING", interactionSent: true,
+          pendingGrant: { ...s.pendingGrant, continue: grant.continue }, continueAfter: Date.now() + Math.max(1, grant.continue.wait ?? 5) * 1000 });
+        return { sessionId: id, status: "FINALIZING", returnUrl: null };
+      }
+      if (!grant.subject.sub_ids.some((subject) => subject.format === "uri" && subject.id === s.wallet!.id)) throw new AppError("Verified subject does not match wallet", 502);
+      await this.deps.grantRepository.saveOwnership({ transactionId: id, userId: s.userId, wallet: s.wallet!,
+        callbackFingerprint: fingerprint, clientId: s.clientId, returnUrl: s.returnUrl });
+      // Durable success wins even if Redis cleanup fails.
+      try { await this.deps.onboardingRepository.transition(id, "FINALIZING", { status: "COMPLETED", completedAt: new Date(),
+        pendingGrant: undefined, interaction: undefined, redirectUrl: undefined }); } catch { /* Recover from PostgreSQL. */ }
+      return this.completedCallback(id, (await this.deps.grantRepository.getFinalized(id))!);
+    } catch {
+      const committed = await this.deps.grantRepository.getFinalized(id);
+      if (committed?.callbackFingerprint === fingerprint) return this.completedCallback(id, committed);
+      await this.fail(claimed, "Ownership verification failed");
+      throw new AppError("Ownership verification failed; check onboarding status", 502);
     }
   }
-
-  // ─────────────────────────────────────────────
-  // Status check
-  // ─────────────────────────────────────────────
-  async getStatus(sessionId: string): Promise<OnboardingStatusResponse> {
-    const session = await this.getValidSession(sessionId);
-    return this.toResponse(session);
-  }
-
-  // ─────────────────────────────────────────────
-  // State Machine: enforce valid transitions
-  // ─────────────────────────────────────────────
-  private async transitionTo(
-    sessionId: string,
-    newStatus: OnboardingStatusType,
-    data?: Partial<OnboardingSession>,
-  ): Promise<OnboardingSession> {
-    const session = await onboardingRepository.findById(sessionId);
-    console.log("New status:", newStatus);
-    console.log("Session:", session);
-    if (!session) throw new AppError("Session not found", 404);
-
-    const allowed = VALID_TRANSITIONS[session.status];
-    if (!allowed.includes(newStatus)) {
-      throw new AppError(
-        `Invalid transition: ${session.status} → ${newStatus}`,
-        409,
-      );
+  async getStatus(id: string, userId: string): Promise<OnboardingStatusResponse> {
+    const durable = await this.deps.grantRepository.getFinalized(id);
+    if (durable) {
+      if (durable.userId !== userId) throw new AppError("Onboarding not found", 404);
+      return { sessionId: id, status: "COMPLETED", linkedAt: durable.completedAt, clientId: durable.clientId, expiresAt: durable.completedAt };
     }
-
-    logger.info(
-      { sessionId, from: session.status, to: newStatus },
-      "[Onboarding] State transition",
-    );
-
-    return onboardingRepository.update(sessionId, {
-      ...data,
-      status: newStatus,
-    });
-  }
-
-  // ─────────────────────────────────────────────
-  // Helpers
-  // ─────────────────────────────────────────────
-  private async getValidSession(sessionId: string): Promise<OnboardingSession> {
-    const session = await onboardingRepository.findById(sessionId);
-
-    if (!session) {
-      throw new AppError(`Onboarding session '${sessionId}' not found`, 404);
+    let s = await this.validSession(id, userId);
+    if (["FINALIZING", "CONSENT_REQUESTING"].includes(s.status) && Date.now() - s.updatedAt.getTime() > 60000) {
+      s = await this.deps.onboardingRepository.transition(id, s.status, { status: "FAILED", failureReason: "Authorization interrupted", pendingGrant: undefined, interaction: undefined, redirectUrl: undefined });
     }
-
-    // Check TTL expiry
-    const age = Date.now() - session.createdAt.getTime();
-    if (
-      age > SESSION_TTL_MS &&
-      !["COMPLETED", "FAILED", "EXPIRED"].includes(session.status)
-    ) {
-      await this.transitionTo(sessionId, OnboardingStatus.EXPIRED);
-      throw new AppError("Onboarding session has expired", 410);
-    }
-
-    return session;
+    return this.response(s);
   }
-
-  private toResponse(session: OnboardingSession): OnboardingStatusResponse {
-    return {
-      sessionId: session.id,
-      status: session.status,
-      wallet: session.wallet,
-      redirectUrl: session.redirectUrl,
-      linkedAt: session.completedAt,
-    };
+  private completedCallback(id: string, durable: FinalizedOwnership): OnboardingCallbackResult {
+    return { sessionId: id, status: "COMPLETED", returnUrl: this.deps.config.returnUrls[durable.clientId] === durable.returnUrl ? durable.returnUrl : null };
+  }
+  private async validSession(id: string, userId: string) {
+    const s = await this.deps.onboardingRepository.findById(id);
+    if (!s || s.userId !== userId) throw new AppError("Onboarding not found", 404);
+    if (Date.now() >= s.createdAt.getTime() + SESSION_TTL_MS) throw new AppError("Onboarding expired", 410);
+    return s;
+  }
+  private response(s: OnboardingSession): OnboardingStatusResponse {
+    return { sessionId: s.id, status: s.status, wallet: s.wallet, redirectUrl: s.redirectUrl, linkedAt: s.completedAt,
+      clientId: s.clientId, expiresAt: new Date(s.createdAt.getTime() + SESSION_TTL_MS) };
+  }
+  private async fail(s: OnboardingSession, reason: string) {
+    try { await this.deps.onboardingRepository.transition(s.id, s.status, { status: "FAILED", failureReason: reason,
+      pendingGrant: undefined, interaction: undefined, redirectUrl: undefined }); }
+    catch { this.deps.logger.warn({ sessionId: s.id }, "Could not update failed onboarding session"); }
   }
 }
-
-export const onboardingService = new OnboardingService();

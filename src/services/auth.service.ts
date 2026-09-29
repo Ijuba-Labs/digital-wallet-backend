@@ -1,70 +1,13 @@
-import type { AuthServiceDependencies, LoginInput, LoginResult, RegisterInput, RegisterResponse } from "@/types/auth";
+import type {
+    AuthServiceDependencies,
+    LoginInput,
+    LoginResponse,
+    RegisterInput,
+    RegisterResponse
+} from "@/types/auth";
 import { AppError } from "@/utils/appError";
 import { createAccessToken } from "@/utils/auth/auth-token";
 import { hashPassword, verifyPassword } from "@/utils/auth/password";
-
-// export class AuthService {
-
-//     register = async (user: RegisterInput): Promise<RegisterResponse> => {
-//         const existing = await userRepository.findByEmail(user.email);
-//         if (existing) {
-//             throw new AppError("A user with this email already exists.", 400);
-//         }
-
-//         const hashedPassword = await hashPassword(user.password);
-
-//         const savedUser = await userRepository.save({
-//             first_name: user.first_name,
-//             last_name: user.last_name,
-//             email: user.email,
-//             password_hash: hashedPassword,
-//             phone_number: user.phone_number
-//         });
-
-//         const userId = savedUser.id as string;
-//         const userEmail = savedUser.email as string;
-//         const { token, expiresIn, expiresAt } = createAccessToken({
-//             id: userId,
-//             email: userEmail
-//         });
-
-
-//         const { password_hash, ...publicUser } = savedUser;
-//         return {
-//             user: publicUser,
-//             accessToken: token,
-//             expiresIn,
-//             expiresAt
-//         };
-//     }
-
-//     login = async (userLogin: LoginInput): Promise<LoginResult> => {
-//         const user = await userRepository.findByEmail(userLogin.email)
-//         if (!user) {
-//             throw new AppError("User account not found", 404);
-//         }
-
-//         const password = userLogin.password;
-//         const hash = user.password_hash as string;
-//         const hasAccess = await verifyPassword(password, hash);
-//         if (!hasAccess) {
-//             throw new AppError(`Incorrect email or password`, 401);
-//         }
-
-//         const userId = user.id as string;
-//         const userEmail = user.email as string;
-//         const { token } = createAccessToken({
-//             id: userId,
-//             email: userEmail
-//         });
-
-//         return token;
-
-//     }
-// }
-
-// export const authService = new AuthService();
-
 
 export const createAuthService = ({ userRepository }: AuthServiceDependencies) => {
     return {
@@ -101,7 +44,7 @@ export const createAuthService = ({ userRepository }: AuthServiceDependencies) =
             };
         },
 
-        login: async (userLogin: LoginInput): Promise<LoginResult> => {
+        login: async (userLogin: LoginInput): Promise<LoginResponse> => {
             const user = await userRepository.findByEmail(userLogin.email)
             if (!user) {
                 throw new AppError("User account not found", 404);
@@ -116,12 +59,20 @@ export const createAuthService = ({ userRepository }: AuthServiceDependencies) =
 
             const userId = user.id as string;
             const userEmail = user.email as string;
-            const { token } = createAccessToken({
+            const { token, expiresAt, expiresIn } = createAccessToken({
                 id: userId,
                 email: userEmail
             });
 
-            return token;
+            const { password_hash, ...publicUser } = user;
+
+            return {
+                user: publicUser,
+                accessToken: token,
+                expiresIn,
+                expiresAt
+
+            };
 
         },
     };

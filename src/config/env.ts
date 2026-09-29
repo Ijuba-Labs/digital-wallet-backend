@@ -19,12 +19,19 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   PORT: z.coerce.number().default(5000),
-  FRONTEND_URL: z.url(),
-  HOST: z.url().default("http://wallet-api:9000"),
+  FRONTEND_URL: z.url().optional(),
+  HOST: z.url().default("http://localhost:9001"),
+  API_PUBLIC_URL: z.url().default("http://localhost:9001"),
+  ONBOARDING_WEB_RETURN_URL: z.preprocess((value) => value === "" ? undefined : value, z.url().optional()),
+  ONBOARDING_MOBILE_RETURN_URL: z.preprocess((value) => value === "" ? undefined : value, z.url().optional()),
   REDIS_URL: z.string().default("redis://shared-redis:6379"),
   REDIS_HOST: z.string().default("shared-redis"),
   DATABASE_URL: z.url("DATABASE_URL must be a valid connection string"),
   JWT_SECRET: z.string().min(16, "JWT_SECRET must be at least 16 characters long"),
+  GRANT_ENCRYPTION_KEY: z.preprocess((v) => v === "" ? undefined : v, z.string().regex(/^[a-f\d]{64}$/i).optional()),
+  ENCRYPTION_KEYRING_FILE: z.preprocess((v) => v === "" ? undefined : v, z.string().optional()),
+  OPEN_PAYMENTS_ALLOWED_ORIGINS: z.string().default(""),
+  TRUSTED_PROXY_CIDRS: z.string().default(""),
 
   JWT_EXPIRES_IN: z.string().default("1d"),
   CORS_ORIGIN: z.string(),
@@ -49,6 +56,16 @@ const parseEnv = () => {
     process.exit(1); // Stop server immediately
   }
 
+  if (result.data.NODE_ENV === "production") {
+    if (!result.data.ENCRYPTION_KEYRING_FILE || !result.data.OPEN_PAYMENTS_ALLOWED_ORIGINS ||
+        new URL(result.data.API_PUBLIC_URL).protocol !== "https:") {
+      throw new Error("Production requires a mounted keyring, provider origins, and HTTPS API_PUBLIC_URL");
+    }
+  }
+  for (const value of result.data.OPEN_PAYMENTS_ALLOWED_ORIGINS.split(",").filter(Boolean)) {
+    const url = new URL(value.trim());
+    if (url.protocol !== "https:" || url.origin !== value.trim()) throw new Error("Provider allowlist entries must be HTTPS origins");
+  }
   return result.data;
 };
 

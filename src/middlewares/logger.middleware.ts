@@ -14,6 +14,10 @@ import { logger } from "../utils/logger.js";
 
 const httpLogger = pinoHttp({
   logger,
+  // Callback query strings contain interaction proofs; do not persist them in logs.
+  serializers: {
+    req: (req) => ({ id: req.id, method: req.method, url: req.url?.split("?")[0] }),
+  },
   // Use existing header or generate a new UUID for tracing
   genReqId: (req) =>
     (req.headers["x-request-id"] as string) || crypto.randomUUID(),
@@ -23,8 +27,8 @@ const httpLogger = pinoHttp({
     return "info";
   },
   customSuccessMessage: (req, res) =>
-    `${req.method} ${req.url} completed with ${res.statusCode}`,
+    `${req.method} ${req.url?.split("?")[0]} completed with ${res.statusCode}`,
   customErrorMessage: (req, res, err) =>
-    `${req.method} ${req.url} failed with ${res.statusCode}: ${err.message}`,
+    `${req.method} ${req.url?.split("?")[0]} failed with ${res.statusCode}: ${err.message}`,
 });
 export { httpLogger };

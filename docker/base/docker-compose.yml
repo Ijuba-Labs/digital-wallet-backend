@@ -1,88 +1,65 @@
-# Base infrastructure services shared across dev and prod
 name: wallet-backend
 services:
   wallet-api:
-    build: 
+    build:
       context: ../..
-      dockerfile: ./Dockerfile.dev
-    command: pnpm run dev
+      dockerfile: Dockerfile.dev
+    env_file: ../../.env
     ports:
       - "9001:${PORT:-9000}"
-    networks:
-      - wallet-backend
-    develop:
-      watch:
-        # Rebuild container image when dependencies change
-        - action: rebuild
-          path: ../../package.json
-        - action: rebuild
-          path: ../../pnpm-lock.yaml
-        - action: rebuild
-          path: ../../Dockerfile.dev
-
-        # Restart explicitly so synced changes always reach the running API.
-        - action: sync+restart
-          path: ../../src
-          target: /home/backend/src
-          initial_sync: true
-          ignore:
-            - node_modules/
-
-        # Sync tsconfig changes
-        - action: sync+restart
-          path: ../../tsconfig.json
-          target: /home/backend/tsconfig.json
-          initial_sync: true
-
-        # Sync .env changes
-        - action: sync+restart
-          path: ../../.env
-          target: /home/backend/.env
-          initial_sync: true
+    networks: [wallet-backend]
     depends_on:
-      shared-database:
-        condition: service_healthy
+      # db-migrate:
+      #   condition: service_completed_successfully
       shared-redis:
         condition: service_healthy
+  payment-worker:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.dev
+    env_file: ../../.env
+    command: pnpm worker:dev
+    networks: [wallet-backend]
+
   shared-database:
-    image: postgres:16-alpine # use latest official postgres version
-    container_name: shared-database
+    image: postgres:16-alpine
     restart: unless-stopped
-    networks:
-      - wallet-backend
-    volumes:
-      - pgdata:/var/lib/postgresql/data # persist data even if container shuts down
-      - ../../src/database/schema.sql:/docker-entrypoint-initdb.d/01-init.sql
-      # - ./seed.sql:/docker-entrypoint-initdb.d/02-seed.sql # ← Auto-runs on first boot
-    ports:
-      - "${DB_PORT:-5432}:5432"
+    networks: [wallet-backend]
+    volumes: [
+      "pgdata:/var/lib/postgresql/data",
+      "../../src/database/schema.sql:/docker-entrypoint-initdb.d/01-init.sql"
+      ]
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
   shared-redis:
-    image: "redis:8"
-    container_name: shared-redis
+    image: redis:8
     restart: unless-stopped
-    # Enables data persistence (saves DB every 60s if >=1 key changed) and sets a password
-    command: redis-server --save 60 1 --loglevel notice --requirepass ${REDIS_PASSWORD:-secretpassword}
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis-data:/data
+    networks: [wallet-backend]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    command:
+      [
+        "sh",
+        "-c",
+        'exec redis-server --save 60 1 --loglevel notice --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"',
+      ]
+    volumes: [redis-data:/data]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG',
+        ]
       interval: 10s
       timeout: 3s
       retries: 5
-    networks:
-      - wallet-backend
 networks:
   wallet-backend:
     driver: bridge

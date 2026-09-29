@@ -11,7 +11,7 @@ export const createAccessToken = (user: UserAuthToken): AuthToken => {
         email: user.email
     },
         JWT_SECRET, {
-        expiresIn: '15m'
+        expiresIn: '1y'
     });
 
     const decoded = jwt.decode(token) as JwtPayload;

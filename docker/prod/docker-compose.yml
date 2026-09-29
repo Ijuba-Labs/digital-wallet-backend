@@ -1,0 +1,32 @@
+services:
+  wallet-api:
+    build:
+      dockerfile: Dockerfile
+    command: node dist/server.js
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      ENCRYPTION_KEYRING_FILE: /run/secrets/payment_keyring
+      PRIVATE_KEY_PATH_TEST_NET: /run/secrets/open_payments_private_key
+    secrets: [payment_keyring, open_payments_private_key]
+  payment-worker:
+    build:
+      dockerfile: Dockerfile
+    command: node dist/worker.js
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      NODE_ENV: production
+      ENCRYPTION_KEYRING_FILE: /run/secrets/payment_keyring
+      PRIVATE_KEY_PATH_TEST_NET: /run/secrets/open_payments_private_key
+    secrets: [payment_keyring, open_payments_private_key]
+  db-migrate:
+    build:
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+secrets:
+  payment_keyring:
+    file: ${PAYMENT_KEYRING_HOST_PATH:?Set PAYMENT_KEYRING_HOST_PATH}
+  open_payments_private_key:
+    file: ${OPEN_PAYMENTS_PRIVATE_KEY_HOST_PATH:?Set OPEN_PAYMENTS_PRIVATE_KEY_HOST_PATH}

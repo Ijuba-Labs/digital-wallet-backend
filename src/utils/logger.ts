@@ -26,6 +26,6 @@ const logger = pino({
         }
       : undefined,
   // Standard redact list to prevent accidental credential leakage
-  redact: ["req.headers.authorization", "password", "token", "creditCard"],
+  redact: { paths: ["req.headers.authorization", "password", "token", "creditCard", "accessToken", "access_token", "pendingGrant", "token_enc", "*.access_token", "*.accessToken", "*.token_enc"], censor: "[REDACTED]" },
 });
 export { logger };

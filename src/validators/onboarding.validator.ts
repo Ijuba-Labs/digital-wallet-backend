@@ -17,16 +17,17 @@ const walletAddressUrl = z
 
 export const startOnboardingSchema = z.object({
   walletAddressUrl,
-});
+  clientId: z.enum(["api", "web", "mobile"]).default("api"),
+}).strict();
 
 export const consentOnboardingSchema = z.object({
   // No body needed — sessionId comes from route params
 });
 
 export const callbackQuerySchema = z.object({
-  session_id: z.string({ error: "session_id is required" }),
-  interact_ref: z.string({ error: "interact_ref is required" }),
-  hash: z.string({ error: "hash is required" }),
+  session_id: z.string({ error: "session_id is required" }).min(1).max(100),
+  interact_ref: z.string({ error: "interact_ref is required" }).min(1).max(2048).regex(/^[^\r\n]+$/),
+  hash: z.string({ error: "hash is required" }).min(1).max(128),
 });
 
 // Infer types from schemas

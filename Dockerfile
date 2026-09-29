@@ -1,27 +1,22 @@
-# ==============================================================================
-# Multi-Stage Dockerfile for Node.js Application
-#
-# Best Practice:
-# - Stage 1 (Builder): Install full dependencies and compile TypeScript to JS.
-# - Stage 2 (Runner): Copy only compiled artifacts and production dependencies.
-# - Run as a non-root user (e.g. `node`) for enhanced container security.
-# ==============================================================================
-
-# STAGE 1: Build stage
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
-COPY package*.json tsconfig.json ./
-RUN npm ci
-COPY src/ ./src
-RUN npm run build
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+COPY scripts/resolve-build-imports.mjs scripts/clean-build.mjs ./scripts/
+RUN pnpm build && pnpm prune --prod
 
-# STAGE 2: Production runner
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package*.json ./
-RUN npm ci --only=production
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+COPY package.json pnpm-lock.yaml knexfile.cjs ./
+COPY src/database/schema.sql ./src/database/schema.sql
+COPY src/database/knex-migrations ./src/database/knex-migrations
 USER node
-EXPOSE 5000
+EXPOSE 9000
 CMD ["node", "dist/server.js"]

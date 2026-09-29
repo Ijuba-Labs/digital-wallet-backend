@@ -28,14 +28,11 @@ function errorMiddleware(
     isAppError ? err.message : "Internal Server Error";
   const details = isAppError ? err.details : undefined;
 
-  // Structured logging
-  if (statusCode >= 500) {
-    // Replace with your logger (e.g. logger.error)
-    console.error(`[ERROR 500] ${req.method} ${req.originalUrl}:`, err);
-  } else {
-    console.warn(
-      `[WARN ${statusCode}] ${req.method} ${req.originalUrl}: ${err.message}`,
-    );
+  // Never log callback queries, provider payloads, or credential-bearing errors.
+  const path = req.originalUrl.split("?")[0];
+  console.error({ method: req.method, path, statusCode, error: isAppError ? message : "Unhandled error" });
+  if (isAppError && statusCode === 429 && details && typeof details === "object" && "retryAfter" in details) {
+    res.setHeader("Retry-After", String(details.retryAfter));
   }
 
   // Send uniform JSON error response via apiResponse helper

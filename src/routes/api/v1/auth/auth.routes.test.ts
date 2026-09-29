@@ -1,12 +1,17 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import {
+  afterEach,
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+} from "@jest/globals";
 import request from "supertest";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { Knex } from "knex";
 import { createTestDatabase } from "../../../../../tests/database";
-// import { app } from "@/app";
 import { createUserRepository } from "@/repositories/user.repository";
-import { number } from "zod";
 import { env } from "@/config/env";
 import { createApp } from "@/app";
 
@@ -26,54 +31,16 @@ describe("Auth API", () => {
 
   beforeAll(async () => {
     db = await createTestDatabase();
-    app = createApp(db);
+    app = createApp({ db });
   });
 
   afterEach(async () => {
-    await db("users").del();
+    await db("users").where({ email: registration.email }).del();
   });
 
   afterAll(async () => {
     await db.destroy();
   });
-
-  // let testDatabase: Awaited<ReturnType<typeof startTestDatabase>>;
-  // let app: Application;
-  // let appDb: typeof import("@/config/database").default;
-  // let userRepository: typeof import("@/repositories").userRepository;
-
-  // beforeAll(async () => {
-  //   testDatabase = await startTestDatabase();
-
-  //   Object.assign(process.env, {
-  //     NODE_ENV: "test",
-  //     FRONTEND_URL: "http://localhost:3000",
-  //     DATABASE_URL: testDatabase.container.getConnectionUri(),
-  //     JWT_SECRET: jwtSecret,
-  //     CORS_ORIGIN: "http://localhost:3000",
-  //     MOCK_USERS_COUNT: "1",
-  //     SEED_USERS: "1",
-  //     TEST_DB_NAME: testDatabase.container.getDatabase(),
-  //     DB_USER: testDatabase.container.getUsername(),
-  //     DB_PASSWORD: testDatabase.container.getPassword(),
-  //     DB_HOST: testDatabase.container.getHost(),
-  //     DB_TEST_PORT: String(testDatabase.container.getPort()),
-  //     ACCESS_TOKEN_EXPIRES_IN: "1d",
-  //   });
-
-  //   ({ app } = await import("@/app"));
-  //   ({ default: appDb } = await import("@/config/database"));
-  //   ({ userRepository } = await import("@/repositories"));
-  // });
-
-  // beforeEach(async () => {
-  //   await testDatabase.db("users").del();
-  // });
-
-  // afterAll(async () => {
-  //   await appDb?.destroy();
-  //   await testDatabase?.stop();
-  // });
 
   it("registers a user, hashes the password, and returns a token without credentials", async () => {
     const userRepository = createUserRepository(db);
@@ -84,7 +51,6 @@ describe("Auth API", () => {
 
     const storedUser = await userRepository.findByEmail(registration.email);
 
-    // expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       success: true,
       data: {
@@ -112,76 +78,92 @@ describe("Auth API", () => {
     });
   });
 
-  // it("rejects a duplicate email", async () => {
-  //   await request(app).post("/api/v1/auth/register").send(registration).expect(200);
+  describe("POST /api/v1/auth/login", () => {
+    const credentials = {
+      email: registration.email,
+      password: registration.password,
+    };
 
-  //   const response = await request(app).post("/api/v1/auth/register").send(registration);
+    it("returns the user and a valid access token for correct credentials", async () => {
+      await request(app)
+        .post("/api/v1/auth/register")
+        .send(registration)
+        .expect(201);
 
-  //   expect(response.status).toBe(400);
-  //   expect(response.body.error.message).toBe("A user with this email already exists.");
-  // });
+      const storedUser = await createUserRepository(db).findByEmail(registration.email);
+      const response = await request(app)
+        .post("/api/v1/auth/login")
+        .send(credentials)
+        .expect(200);
 
-  // it("rejects invalid registration input before saving", async () => {
-  //   const response = await request(app)
-  //     .post("/api/v1/auth/register")
-  //     .send({ ...registration, email: "invalid-email" });
+      expect(response.body).toMatchObject({
+        success: true,
+        data: {
+          user: { id: storedUser.id, email: registration.email },
+          accessToken: expect.any(String),
+          expiresIn: expect.any(Number),
+          expiresAt: expect.any(Number),
+        },
+      });
+      expect(response.body.data.user).not.toHaveProperty("password");
+      expect(response.body.data.user).not.toHaveProperty("password_hash");
+      expect(response.body.data.expiresIn).toBeGreaterThan(0);
 
-  //   expect(response.status).toBe(400);
-  //   expect(response.body.error.details.email).toEqual(expect.arrayContaining(["Invalid email address format"]));
-  //   expect(await testDatabase.db("users").count("*").first()).toMatchObject({ count: "0" });
-  // });
+      const claims = jwt.verify(response.body.data.accessToken, JWT_SECRET);
+      expect(claims).toMatchObject({
+        id: storedUser.id,
+        email: registration.email,
+        exp: response.body.data.expiresAt,
+      });
+    });
 
-  // it("logs in a registered user and returns a valid token", async () => {
-  //   await request(app).post("/api/v1/auth/register").send(registration).expect(200);
-  //   const storedUser = await userRepository.findByEmail(registration.email);
+    it("rejects an incorrect password", async () => {
+      await request(app)
+        .post("/api/v1/auth/register")
+        .send(registration)
+        .expect(201);
 
-  //   const response = await request(app).post("/api/v1/auth/login").send({
-  //     email: registration.email,
-  //     password: registration.password,
-  //   });
+      const response = await request(app)
+        .post("/api/v1/auth/login")
+        .send({ ...credentials, password: "wrong-password" })
+        .expect(401);
 
-  //   expect(response.status).toBe(200);
-  //   expect(response.body).toMatchObject({ success: true, data: { token: expect.any(String) } });
-  //   expect(jwt.verify(response.body.data.token, jwtSecret)).toMatchObject({
-  //     id: storedUser.id,
-  //     email: registration.email,
-  //   });
-  //   expect(response.body.data).not.toHaveProperty("password_hash");
-  // });
+      expect(response.body).toMatchObject({
+        success: false,
+        error: { statusCode: 401, message: "Incorrect email or password" },
+      });
+      expect(response.body).not.toHaveProperty("data");
+    });
 
-  // it("rejects an incorrect password", async () => {
-  //   await request(app).post("/api/v1/auth/register").send(registration).expect(200);
+    it("rejects an account that does not exist", async () => {
+      const response = await request(app)
+        .post("/api/v1/auth/login")
+        .send(credentials)
+        .expect(404);
 
-  //   const response = await request(app).post("/api/v1/auth/login").send({
-  //     email: registration.email,
-  //     password: "wrong-password",
-  //   });
+      expect(response.body).toMatchObject({
+        success: false,
+        error: { statusCode: 404, message: "User account not found" },
+      });
+    });
 
-  //   expect(response.status).toBe(401);
-  //   expect(response.body.error.message).toBe("Incorrect email or password");
-  // });
+    it("rejects malformed credentials", async () => {
+      const response = await request(app)
+        .post("/api/v1/auth/login")
+        .send({ email: "not-an-email", password: "short" })
+        .expect(400);
 
-  // it("rejects login for an unknown account", async () => {
-  //   const response = await request(app).post("/api/v1/auth/login").send({
-  //     email: registration.email,
-  //     password: registration.password,
-  //   });
+      expect(response.body).toMatchObject({
+        success: false,
+        error: {
+          statusCode: 400,
+          details: {
+            email: ["Invalid email address format"],
+            password: ["Password must be 8 characters or more"],
+          },
+        },
+      });
+    });
+  });
 
-  //   expect(response.status).toBe(404);
-  //   expect(response.body.error.message).toBe("User account not found");
-  // });
-
-  // it("rejects invalid login input before looking up a user", async () => {
-  //   const response = await request(app).post("/api/v1/auth/login").send({
-  //     email: "invalid-email",
-  //     password: "short",
-  //   });
-
-  //   expect(response.status).toBe(400);
-  //   expect(response.body.error.details).toMatchObject({
-  //     email: ["Invalid email address format"],
-  //     password: ["Password must be 8 characters or more"],
-  //   });
-  //   expect(await testDatabase.db("users").count("*").first()).toMatchObject({ count: "0" });
-  // });
 });

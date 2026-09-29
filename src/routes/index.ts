@@ -1,12 +1,9 @@
 import { Router, Request, Response } from "express";
-import { createV1Router, v1Router } from "./api/v1/index";
+import { createV1Router } from "./api/v1/index";
 import { RouterDependencies } from "@/types/auth";
-import { createAuthRouter } from "./api/v1/auth/auth.routes";
 // import { checkDatabaseHealth } from '../config/database.js';
 
-export const router = Router();
-
-export const createRouter = ({ authController, requireAuth }: RouterDependencies) => {
+export const createRouter = (dependencies: RouterDependencies) => {
   const router = Router();
 
   /**
@@ -14,10 +11,7 @@ export const createRouter = ({ authController, requireAuth }: RouterDependencies
  */
   router.use(
     "/api/v1",
-    createV1Router({
-      authController,
-      requireAuth
-    })
+    createV1Router(dependencies)
   );
 
   /**

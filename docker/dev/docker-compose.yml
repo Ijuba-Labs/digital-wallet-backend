@@ -1,11 +1,68 @@
 services:
+  wallet-api:
+    command: pnpm dev
+    environment:
+      PRIVATE_KEY_PATH_TEST_NET: /run/secrets/open_payments_private_key
+    secrets: [open_payments_private_key]
+    develop:
+      watch:
+        - action: rebuild
+          path: ../../package.json
+        - action: rebuild
+          path: ../../pnpm-lock.yaml
+        - action: rebuild
+          path: ../../Dockerfile.dev
+        - action: sync+restart
+          path: ../../src
+          target: /home/backend/src
+          initial_sync: true
+        - action: sync+restart
+          path: ../../tsconfig.json
+          target: /home/backend/tsconfig.json
+          initial_sync: true
+        - action: sync+restart
+          path: ../../.env
+          target: /home/backend/.env
+          initial_sync: true
+  payment-worker:
+    environment:
+      PRIVATE_KEY_PATH_TEST_NET: /run/secrets/open_payments_private_key
+    secrets: [open_payments_private_key]
+    develop:
+      watch:
+        - action: rebuild
+          path: ../../package.json
+        - action: rebuild
+          path: ../../pnpm-lock.yaml
+        - action: sync+restart
+          path: ../../src
+          target: /home/backend/src
+          initial_sync: true
+        - action: sync+restart
+          path: ../../.env
+          target: /home/backend/.env
+          initial_sync: true
+    depends_on:
+      shared-database:
+        condition: service_healthy
+      shared-redis:
+        condition: service_healthy
+
+  shared-database:
+    ports: ["127.0.0.1:${DB_PORT:-5432}:5432"]
+  shared-redis:
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
   db-seed:
+    profiles: [seed]
     build:
       context: ../..
-      dockerfile: ./Dockerfile.dev
+      dockerfile: Dockerfile.dev
+    env_file: ../../.env
     depends_on:
       shared-database:
         condition: service_healthy
     command: pnpm db:seed
-    networks:
-      - wallet-backend
+    networks: [wallet-backend]
+secrets:
+  open_payments_private_key:
+    file: ${OPEN_PAYMENTS_PRIVATE_KEY_HOST_PATH:?Set OPEN_PAYMENTS_PRIVATE_KEY_HOST_PATH to the absolute host path of your Open Payments private key}

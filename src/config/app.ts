@@ -1,4 +1,3 @@
-import { loadOrGenerateKey } from "@/utils/key";
 import dotenv from "dotenv";
 import * as fs from "fs";
 
@@ -41,15 +40,6 @@ export type IAppConfig = typeof Config;
 dotenv.config({
   path: process.env.ENV_FILE || ".env",
 });
-
-let privateKeyFileEnv;
-try {
-  privateKeyFileEnv = envString("PRIVATE_KEY_FILE");
-} catch (err) {
-  /* empty */
-}
-
-const privateKeyFileValue = loadOrGenerateKey(privateKeyFileEnv);
 
 export const Config = {
   port: envInt("PORT", 9000),

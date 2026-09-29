@@ -1,8 +1,12 @@
+import type { PaymentRateLimits } from "@/middlewares/rateLimiter.middleware";
 import { createUserRepository } from "@/repositories/user.repository";
 import { User } from "./user";
 import { createAuthService } from "@/services/auth.service";
 import { createAuthController } from "@/controllers/auth.controller";
 import { RequestHandler } from "express";
+import type { OnboardingController } from "@/controllers/onboarding.controller";
+import type { createWalletController } from "@/controllers/wallet.controller";
+import type { TransferController } from "@/controllers/transfer.controller";
 
 export interface RegisterInput extends User {
     password: string;
@@ -18,7 +22,6 @@ export interface RegisterResult {
     token: string;
 }
 
-export type LoginResult = string;
 
 export type RegisterResponse = {
     user: {
@@ -35,6 +38,8 @@ export type RegisterResponse = {
     expiresIn?: number;
     expiresAt: number;
 };
+
+export interface LoginResponse extends RegisterResponse { };
 
 export type AuthToken = {
     token: string;
@@ -58,6 +63,10 @@ export type AuthController = ReturnType<typeof createAuthController>;
 
 export type RouterDependencies = {
     authController: AuthController;
+    onboardingController: OnboardingController;
+    walletController: ReturnType<typeof createWalletController>;
+    transferController: TransferController;
+    rateLimits: PaymentRateLimits;
     requireAuth: RequestHandler;
 };
 

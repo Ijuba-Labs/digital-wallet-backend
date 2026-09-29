@@ -8,4 +8,11 @@
  * 3. Use explicit naming conventions for Request / Response DTOs (e.g. `CreateRewardDTO`, `UserResponseDTO`).
  */
 
-export {};
+import Redis from "ioredis";
+import { Knex } from "knex";
+
+
+export type AppDependencies = {
+    db: Knex;
+    redis?: Redis;
+};

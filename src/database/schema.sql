@@ -31,25 +31,37 @@ CREATE TABLE wallets (
     is_default BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    public_name TEXT,
+    verified_at TIMESTAMPTZ,
 
     CONSTRAINT uq_user_wallet UNIQUE(user_id, wallet_address_url)
 );
 
 CREATE INDEX idx_wallets_user ON wallets(user_id);
 
--- Open Payments GNAP Access Tokens
+-- Durable ownership attestations and optional reusable credentials; never pending grants.
 CREATE TABLE wallet_grants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     wallet_id UUID NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
-    access_token_enc TEXT NOT NULL, -- Encrypted at rest using AES-256-GCM
-    manage_url TEXT,                -- GNAP token rotation endpoint
-    interact_ref TEXT,              -- Reference from the completed consent interaction
-    scope JSONB NOT NULL,           -- ['incoming-payment', 'quote', 'outgoing-payment']
-    expires_at TIMESTAMPTZ,         -- Nullable if permanent until revoked
+    transaction_id TEXT UNIQUE NOT NULL,
+    purpose TEXT NOT NULL CHECK (purpose IN ('ONBOARDING', 'REUSABLE_ACCESS')),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'EXPIRED', 'REVOKED')),
+    access_token_enc TEXT,
+    key_id TEXT,
+    manage_url TEXT,
+    access JSONB NOT NULL DEFAULT '[]',
+    expires_at TIMESTAMPTZ,
+    verified_subject_uri TEXT,
+    verified_at TIMESTAMPTZ,
+    callback_fingerprint CHAR(64) NOT NULL,
+    client_id TEXT NOT NULL DEFAULT 'api',
+    return_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (purpose <> 'ONBOARDING' OR (verified_subject_uri IS NOT NULL AND verified_at IS NOT NULL)),
+    CHECK ((access_token_enc IS NULL) = (key_id IS NULL)),
+    CHECK (purpose <> 'REUSABLE_ACCESS' OR status <> 'ACTIVE' OR (access_token_enc IS NOT NULL AND manage_url IS NOT NULL))
 );
-
 CREATE INDEX idx_wallet_grants_wallet ON wallet_grants(wallet_id);
 
 -- Accounts (Users, Merchants, and System Liquidity Reserves)
@@ -106,3 +118,85 @@ CREATE TABLE reward_events (
 );
 
 CREATE INDEX idx_reward_events_user ON reward_events(user_id, created_at DESC);
+
+-- Reject missing fields, numeric JSON values, overflow, and fractional scales.
+CREATE FUNCTION valid_payment_amount(amount JSONB, positive BOOLEAN) RETURNS BOOLEAN
+LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+BEGIN
+  IF jsonb_typeof(amount) <> 'object' OR NOT amount ?& ARRAY['value','assetCode','assetScale']
+     OR jsonb_typeof(amount->'value') <> 'string'
+     OR (amount->>'value') !~ '^(0|[1-9][0-9]{0,19})$'
+     OR jsonb_typeof(amount->'assetCode') <> 'string'
+     OR length(amount->>'assetCode') NOT BETWEEN 1 AND 12
+     OR jsonb_typeof(amount->'assetScale') <> 'number'
+     OR (amount->>'assetScale') !~ '^[0-9]{1,3}$' THEN RETURN FALSE; END IF;
+  RETURN (amount->>'value')::numeric BETWEEN CASE WHEN positive THEN 1 ELSE 0 END AND 18446744073709551615
+     AND (amount->>'assetScale')::int BETWEEN 0 AND 255;
+END $$;
+
+CREATE TABLE transfers (
+    id UUID PRIMARY KEY,
+    sender_user_id UUID NOT NULL REFERENCES users(id),
+    recipient_user_id UUID NOT NULL REFERENCES users(id),
+    sender_wallet_id UUID NOT NULL REFERENCES wallets(id),
+    recipient_wallet_id UUID NOT NULL REFERENCES wallets(id),
+    sender_wallet JSONB NOT NULL,
+    recipient_wallet JSONB NOT NULL,
+    idempotency_key VARCHAR(128) NOT NULL,
+    request_hash CHAR(64) NOT NULL,
+    description VARCHAR(280),
+    debit_amount JSONB NOT NULL CHECK (valid_payment_amount(debit_amount, true)),
+    receive_amount JSONB CHECK (valid_payment_amount(receive_amount, true)),
+    sent_amount JSONB CHECK (valid_payment_amount(sent_amount, false)),
+    received_amount JSONB CHECK (valid_payment_amount(received_amount, false)),
+    incoming_payment_url TEXT UNIQUE,
+    quote_url TEXT UNIQUE,
+    outgoing_payment_url TEXT UNIQUE,
+    status TEXT NOT NULL DEFAULT 'CREATING' CHECK (status IN (
+      'CREATING', 'AWAITING_AUTHORIZATION', 'FINALIZING', 'AUTHORIZED',
+      'SUBMITTING', 'PENDING', 'COMPLETED', 'FAILED', 'EXPIRED', 'UNKNOWN'
+    )),
+    error_code TEXT,
+    callback_fingerprint CHAR(64),
+    provider_failed BOOLEAN,
+    expires_at TIMESTAMPTZ NOT NULL,
+    quote_expires_at TIMESTAMPTZ,
+    incoming_expires_at TIMESTAMPTZ,
+    last_provider_checked_at TIMESTAMPTZ,
+    reconciliation_required BOOLEAN NOT NULL DEFAULT false,
+    reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ DEFAULT (now() + interval '60 seconds'),
+    lease_owner UUID,
+    lease_until TIMESTAMPTZ,
+    cleanup_state TEXT NOT NULL DEFAULT 'PENDING' CHECK (cleanup_state IN ('PENDING','DONE')),
+    cleanup_error TEXT,
+    state_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    UNIQUE(sender_user_id, idempotency_key),
+    CHECK (sender_user_id <> recipient_user_id),
+    CHECK (sent_amount IS NULL OR sent_amount->>'assetCode' <> debit_amount->>'assetCode'
+      OR sent_amount->>'assetScale' <> debit_amount->>'assetScale'
+      OR (sent_amount->>'value')::numeric <= (debit_amount->>'value')::numeric),
+    CHECK (received_amount IS NULL OR (receive_amount IS NOT NULL
+      AND received_amount->>'assetCode' = receive_amount->>'assetCode'
+      AND received_amount->>'assetScale' = receive_amount->>'assetScale'))
+);
+CREATE INDEX idx_transfers_sender_history ON transfers(sender_user_id, created_at DESC, id DESC);
+CREATE INDEX idx_transfers_recipient_history ON transfers(recipient_user_id, created_at DESC, id DESC);
+CREATE INDEX idx_transfers_work ON transfers(next_attempt_at) WHERE next_attempt_at IS NOT NULL;
+
+CREATE TABLE transfer_credentials (
+    transfer_id UUID NOT NULL REFERENCES transfers(id),
+    purpose TEXT NOT NULL CHECK (purpose IN ('incoming','outgoing')),
+    token_enc TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    manage_url TEXT NOT NULL,
+    access JSONB NOT NULL,
+    expires_at TIMESTAMPTZ,
+    rotate_after TIMESTAMPTZ,
+    generation INTEGER NOT NULL DEFAULT 1,
+    state TEXT NOT NULL DEFAULT 'READY' CHECK (state IN ('READY','ROTATING','UNAVAILABLE')),
+    PRIMARY KEY (transfer_id, purpose)
+);

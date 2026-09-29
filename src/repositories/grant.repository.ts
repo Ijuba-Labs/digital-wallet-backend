@@ -1,35 +1,38 @@
-import { logger } from "@/utils/logger";
-// import { memoryDb } from "../config/database";
-import { PendingGrant } from "@interledger/open-payments";
+import type { GrantRepositoryDependencies, SaveOwnershipInput, FinalizedOwnership } from "@/types/grant";
+import type { LinkedWallet } from "@/types/wallet";
+import { AppError } from "@/utils/appError";
 
-export const memoryDb = {
-  pendingGrants: new Map<string, PendingGrant>(),
-  finalTokens: new Map<string, string>(),
-};
 export class GrantRepository {
-  public async savePending(
-    transactionId: string,
-    grant: PendingGrant,
-  ): Promise<void> {
-    memoryDb.pendingGrants.set(transactionId, grant);
-    logger.info(`[DB] Saved pending grant for TX: ${transactionId}`);
+  constructor(private readonly deps: GrantRepositoryDependencies) {}
+  async listLinkedWallets(userId: string): Promise<LinkedWallet[]> {
+    return this.deps.db("wallets").where({ user_id: userId }).whereNotNull("verified_at")
+      .select("id", "wallet_address_url as walletAddressUrl", "public_name as publicName", "asset_code as assetCode",
+        "asset_scale as assetScale", "status", "is_default as isDefault", "verified_at as verifiedAt", "created_at as createdAt", "updated_at as updatedAt")
+      .orderBy("is_default", "desc").orderBy("created_at", "desc").orderBy("id", "asc");
   }
-
-  public async getPending(transactionId: string): Promise<PendingGrant> {
-    const grant = memoryDb.pendingGrants.get(transactionId) as PendingGrant;
-    return grant;
+  async getFinalized(transactionId: string): Promise<FinalizedOwnership | undefined> {
+    return this.deps.db("wallet_grants as g").join("wallets as w", "w.id", "g.wallet_id")
+      .where({ "g.transaction_id": transactionId, "g.purpose": "ONBOARDING" })
+      .first("w.user_id as userId", "w.wallet_address_url as walletAddressUrl", "g.callback_fingerprint as callbackFingerprint",
+        "g.verified_at as completedAt", "g.client_id as clientId", "g.return_url as returnUrl");
   }
-
-  public async deletePending(transactionId: string): Promise<void> {
-    memoryDb.pendingGrants.delete(transactionId);
-  }
-
-  public async saveFinalToken(
-    userId: string,
-    accessToken: string,
-  ): Promise<void> {
-    memoryDb.finalTokens.set(userId, accessToken);
+  async saveOwnership(input: SaveOwnershipInput): Promise<void> {
+    await this.deps.db.transaction(async (trx) => {
+      const existing = await trx("wallet_grants as g").join("wallets as w", "w.id", "g.wallet_id")
+        .where("g.transaction_id", input.transactionId).first("g.callback_fingerprint", "w.user_id");
+      if (existing) {
+        if (existing.callback_fingerprint !== input.callbackFingerprint || existing.user_id !== input.userId) throw new AppError("Ownership transaction conflict", 409);
+        return;
+      }
+      const [wallet] = await trx("wallets").insert({ user_id: input.userId, wallet_address_url: input.wallet.id,
+        asset_code: input.wallet.assetCode, asset_scale: input.wallet.assetScale, auth_server: input.wallet.authServer,
+        resource_server: input.wallet.resourceServer, public_name: input.wallet.publicName ?? null, verified_at: trx.fn.now() })
+        .onConflict(["user_id", "wallet_address_url"]).merge({ asset_code: input.wallet.assetCode, asset_scale: input.wallet.assetScale,
+          auth_server: input.wallet.authServer, resource_server: input.wallet.resourceServer, public_name: input.wallet.publicName ?? null,
+          verified_at: trx.fn.now(), updated_at: trx.fn.now(), status: "ACTIVE" }).returning<{ id: string }[]>("id");
+      await trx("wallet_grants").insert({ wallet_id: wallet.id, transaction_id: input.transactionId, purpose: "ONBOARDING",
+        verified_subject_uri: input.wallet.id, verified_at: trx.fn.now(), callback_fingerprint: input.callbackFingerprint,
+        client_id: input.clientId, return_url: input.returnUrl, access: "[]" });
+    });
   }
 }
-
-export const grantRepository = new GrantRepository();

@@ -1,152 +1,59 @@
-import { redisClient } from "@/config/redis";
-import { OnboardingSession } from "@/types/onboarding";
+import type { OnboardingRepositoryDependencies, OnboardingSession } from "@/types/onboarding";
 import { AppError } from "@/utils/appError";
-import { logger } from "@/utils/logger";
-
-/**
- * Persistence layer for onboarding sessions.
- *
- * Currently uses an in-memory Map (same pattern as your existing
- * GrantRepository). Swap with a real DB query when you dockerize
- * with PostgreSQL.
- *
- * When you move to a real DB, this becomes:
- *   - A Knex/Drizzle/Prisma query file
- *   - The interface stays the same (no service changes needed)
- */
-const SESSION_PREFIX = process.env.SESSION_PREFIX;
-const USER_ACTIVE_PREFIX = process.env.USER_ACTIVE_PREFIX;
-const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_MS) * 60; // example 15 minutes
-
-const sessionStore = new Map<string, OnboardingSession>();
+import { createGrantCipher } from "@/utils/grant-encryption";
+import { SESSION_TTL_MS, type OnboardingStatusType } from "@/constants/onboarding";
 
 export class OnboardingRepository {
-  private sessionKey(id: string): string {
-    return `${SESSION_PREFIX}${id}`;
+  private readonly cipher = createGrantCipher();
+  constructor(private readonly deps: OnboardingRepositoryDependencies) {}
+  private key(id: string) { return `onboarding:v2:${id}`; }
+  private active(userId: string) { return `onboarding:v2:user:${userId}`; }
+  private encode(s: OnboardingSession) { return this.cipher.encrypt(JSON.stringify(s), `onboarding-session:${s.id}`); }
+  private decode(id: string, raw: string): OnboardingSession {
+    const s = JSON.parse(this.cipher.decrypt(raw, `onboarding-session:${id}`));
+    return { ...s, createdAt: new Date(s.createdAt), updatedAt: new Date(s.updatedAt), completedAt: s.completedAt ? new Date(s.completedAt) : undefined };
   }
-
-  private userActiveKey(userId: string): string {
-    return `${USER_ACTIVE_PREFIX}${userId}:active`;
+  async save(s: OnboardingSession): Promise<void> {
+    const ttl = s.createdAt.getTime() + SESSION_TTL_MS - Date.now();
+    if (ttl <= 0) throw new AppError("Onboarding expired", 410);
+    const result = await this.deps.redis.eval(`
+      if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+      redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[3])
+      redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
+      return 1
+    `, 2, this.key(s.id), this.active(s.userId), this.encode(s), s.id, ttl);
+    if (result !== 1) throw new AppError("An onboarding session is already active", 409);
   }
-  /**
-   * Saves a new session and sets the TTL.
-   */
-  async save(session: OnboardingSession): Promise<void> {
-    const key = this.sessionKey(session.id);
-    const userKey = this.userActiveKey(session.userId);
-
-    const serialized = JSON.stringify(session);
-
-    await redisClient
-      .multi()
-      .set(userKey, session.id, "EX", SESSION_TTL_SECONDS)
-      .set(key, serialized, "EX", SESSION_TTL_SECONDS)
-      .exec();
-
-    logger.info(
-      { sessionId: session.id, status: session.status },
-      "[Redis] Onboarding session saved",
-    );
+  async findById(id: string): Promise<OnboardingSession | null> {
+    const raw = await this.deps.redis.get(this.key(id));
+    return raw ? this.decode(id, raw) : null;
   }
-  async findById(sessionId: string): Promise<OnboardingSession | null> {
-    const key = this.sessionKey(sessionId);
-    const serialized = await redisClient.get(key);
-    if (serialized != null) {
-      const deserialized = this.deserialize(serialized);
-      return deserialized;
-    }
-
-    return null;
-  }
-
-  // async findByUserId(userId: string): Promise<OnboardingSession[]> {
-  //   const userKey = this.userActiveKey(userId);
-  //   const sessionIds = await redisClient.get(userKey);
-  //   console.log("session ids:", sessionIds);
-  //   if (!sessionIds) return [];
-
-  //   return Array.from("")
-  //     .map((id) => redisClient.get(``))
-  //     .filter(Boolean) as OnboardingSession[];
-  // }
-
   async findActiveByUserId(userId: string): Promise<OnboardingSession | null> {
-    const userKey = this.userActiveKey(userId);
-    const sessionId = await redisClient.get(userKey);
-
-    if (sessionId != null) {
-      const key = this.sessionKey(sessionId);
-      const session = await redisClient.get(key);
-      if (session != null) {
-        const deserialized = this.deserialize(session);
-        return deserialized;
-      }
+    const id = await this.deps.redis.get(this.active(userId));
+    if (!id) return null;
+    const session = await this.findById(id);
+    if (!session || ["COMPLETED", "FAILED", "EXPIRED"].includes(session.status)) {
+      await this.releaseActive(userId, id); return null;
     }
-
-    return null;
+    return session;
   }
-
-  async update(
-    sessionId: string,
-    updates: Partial<OnboardingSession>,
-  ): Promise<OnboardingSession> {
-    const key = this.sessionKey(sessionId);
-    const existing = await redisClient.get(key);
-
-    if (!existing) throw new AppError(`Session ${sessionId} not found`);
-
-    const deserialized = this.deserialize(existing);
-
-    const updated: OnboardingSession = {
-      ...deserialized,
-      ...updates,
-      updatedAt: new Date(),
-    };
-
-    const serialized = JSON.stringify(updated);
-
-    await redisClient.set(key, serialized, "KEEPTTL").then(
-      (onfulfilled) => {
-        logger.info(
-          { sessionId, status: updated.status },
-          "[Onboarding] Session updated",
-        );
-      },
-      (onrejected) => {
-        logger.warn(
-          { sessionId, status: updated.status },
-          "[Onboarding] Session update rejected",
-        );
-        throw new AppError(`Session update rejected`);
-      },
-    );
-
+  async transition(id: string, expected: OnboardingStatusType, changes: Partial<OnboardingSession>): Promise<OnboardingSession> {
+    const raw = await this.deps.redis.get(this.key(id));
+    if (!raw) throw new AppError("Onboarding session unavailable", 410);
+    const current = this.decode(id, raw);
+    if (current.status !== expected) throw new AppError("Onboarding state changed", 409);
+    if (Date.now() >= current.createdAt.getTime() + SESSION_TTL_MS) throw new AppError("Onboarding expired", 410);
+    const updated = { ...current, ...changes, updatedAt: new Date() };
+    const result = await this.deps.redis.eval(`
+      if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+      redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL')
+      return 1
+    `, 1, this.key(id), raw, this.encode(updated));
+    if (result !== 1) throw new AppError("Onboarding state changed", 409);
+    if (["COMPLETED", "FAILED", "EXPIRED"].includes(updated.status)) await this.releaseActive(updated.userId, id);
     return updated;
   }
-
-  async delete(sessionId: string): Promise<void> {
-    const session = await this.findById(sessionId);
-    if (!session) return;
-
-    await redisClient
-      .multi()
-      .del(this.sessionKey(sessionId))
-      .del(this.userActiveKey(session.userId))
-      .exec();
-  }
-
-  /**
-   * Helper to parse dates correctly from JSON string.
-   */
-  private deserialize(raw: string): OnboardingSession {
-    let data = JSON.parse(raw);
-    return {
-      ...data,
-      createdAt: new Date(data.createdAt),
-      updatedAt: new Date(data.updatedAt),
-      completedAt: data.completedAt ? new Date(data.completedAt) : undefined,
-    };
+  private async releaseActive(userId: string, id: string) {
+    await this.deps.redis.eval(`if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[1]) end`, 1, this.active(userId), id);
   }
 }
-
-export const onboardingRepository = new OnboardingRepository();
