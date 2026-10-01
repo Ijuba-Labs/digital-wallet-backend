@@ -26,6 +26,7 @@ import { createAuthController } from "./controllers/auth.controller";
 import { createRequireAuth } from "./middlewares/auth.middleware";
 import { OnboardingService } from "./services/onboarding.service";
 import { OnboardingRepository } from "./repositories/onboarding.repository";
+import { OnboardingRequestRepository } from "./repositories/onboarding-request.repository";
 import { AppDependencies } from "./types";
 import { redisClient } from "./config/redis";
 import { getOpenPaymentsClient } from "@/utils/open-payment";
@@ -69,6 +70,7 @@ export const createApp = ({ db, redis }: AppDependencies): Application => {
 
   const onboardingService = new OnboardingService({
     onboardingRepository,
+    onboardingRequestRepository: new OnboardingRequestRepository(db),
     grantRepository,
     getOpenPaymentsClient,
     logger,

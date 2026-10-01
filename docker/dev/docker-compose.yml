@@ -59,8 +59,8 @@ services:
       dockerfile: Dockerfile.dev
     env_file: ../../.env
     depends_on:
-      shared-database:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     command: pnpm db:seed
     networks: [wallet-backend]
 secrets:

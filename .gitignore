@@ -21,6 +21,9 @@ build/
 *.pem
 *.key
 .env.tunnel
+.env.*
+!.env.example
+!.env.tunnel.example
 
 # Logs
 logs/
@@ -45,3 +48,5 @@ utils.sh
 LOCAL_SETUP_TEMPLATE.md
 # Mounted encryption keyrings and runtime secrets
 secrets/
+*.tar.gz
+*.tgz

@@ -9,8 +9,8 @@ services:
       - "9001:${PORT:-9000}"
     networks: [wallet-backend]
     depends_on:
-      # db-migrate:
-      #   condition: service_completed_successfully
+      db-migrate:
+        condition: service_completed_successfully
       shared-redis:
         condition: service_healthy
   payment-worker:
@@ -20,15 +20,28 @@ services:
     env_file: ../../.env
     command: pnpm worker:dev
     networks: [wallet-backend]
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      shared-redis:
+        condition: service_healthy
+
+  db-migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.dev
+    env_file: ../../.env
+    command: pnpm db:migrate
+    networks: [wallet-backend]
+    depends_on:
+      shared-database:
+        condition: service_healthy
 
   shared-database:
     image: postgres:16-alpine
     restart: unless-stopped
     networks: [wallet-backend]
-    volumes: [
-      "pgdata:/var/lib/postgresql/data",
-      "../../src/database/schema.sql:/docker-entrypoint-initdb.d/01-init.sql"
-      ]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}

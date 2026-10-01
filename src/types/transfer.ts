@@ -42,6 +42,7 @@ export interface TransferRecord {
   lease_until: Date | null;
   cleanup_state: "PENDING" | "DONE";
   cleanup_error: string | null;
+  incoming_completed_at: Date | null;
   created_at: Date;
   updated_at: Date;
   state_changed_at: Date;
@@ -51,7 +52,7 @@ export type NewTransfer = Pick<TransferRecord, "id" | "sender_user_id" | "recipi
   "recipient_wallet_id" | "sender_wallet" | "recipient_wallet" | "request_hash" | "idempotency_key" |
   "description" | "debit_amount" | "expires_at">;
 export type TransferUpdates = Partial<Omit<TransferRecord, keyof NewTransfer | "lease_owner" | "lease_until" | "created_at">> & { expires_at?: Date };
-export type CredentialPurpose = "incoming" | "outgoing";
+export type CredentialPurpose = "incoming" | "outgoing" | "incoming-create" | "quote";
 export interface TransferCredential {
   transfer_id: string;
   purpose: CredentialPurpose;
@@ -62,7 +63,7 @@ export interface TransferCredential {
   expires_at: Date | null;
   rotate_after: Date | null;
   generation: number;
-  state: "READY" | "ROTATING" | "UNAVAILABLE";
+  state: "READY" | "ROTATING" | "UNAVAILABLE" | "REJECTED";
 }
 export interface PaymentSession extends GrantInteraction {
   transferId: string;

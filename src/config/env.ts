@@ -22,6 +22,10 @@ const envSchema = z.object({
   FRONTEND_URL: z.url().optional(),
   HOST: z.url().default("http://localhost:9001"),
   API_PUBLIC_URL: z.url().default("http://localhost:9001"),
+  // SESSION_TTL_MS historically meant minutes; support it only as a fallback.
+  ONBOARDING_SESSION_TTL_MINUTES: z.preprocess(
+    (value) => value ?? process.env.SESSION_TTL_MS ?? 15,
+    z.coerce.number().int().min(1).max(60)),
   ONBOARDING_WEB_RETURN_URL: z.preprocess((value) => value === "" ? undefined : value, z.url().optional()),
   ONBOARDING_MOBILE_RETURN_URL: z.preprocess((value) => value === "" ? undefined : value, z.url().optional()),
   REDIS_URL: z.string().default("redis://shared-redis:6379"),

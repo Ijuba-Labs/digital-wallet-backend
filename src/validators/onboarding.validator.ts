@@ -1,19 +1,11 @@
 import { z } from "zod";
 
-/**
- * Validates the wallet address URL format.
- * Must be a valid HTTPS URL pointing to a wallet address endpoint.
- * Examples:
- *   - https://ilp.interledger-test.dev/ijubane
- *   - https://cloud-nine-wallet-backend/.well-known/pay
- */
-const walletAddressUrl = z
-  .url("walletAddressUrl must be a valid URL")
-  .startsWith("https://", "walletAddressUrl must use HTTPS");
+import { validateWalletAddress } from "@/utils/provider-url";
 
-// .string({ error: "walletAddressUrl is required" })
-// .url("walletAddressUrl must be a valid URL")
-// .startsWith("https://", "walletAddressUrl must use HTTPS");
+const walletAddressUrl = z.string().transform((value, ctx) => {
+  try { return validateWalletAddress(value); }
+  catch { ctx.addIssue({ code: "custom", message: "Invalid wallet address: require HTTPS without credentials, ports, query, or fragment" }); return z.NEVER; }
+});
 
 export const startOnboardingSchema = z.object({
   walletAddressUrl,

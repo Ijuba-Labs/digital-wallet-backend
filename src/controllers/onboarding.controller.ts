@@ -7,6 +7,7 @@ import {
   startOnboardingSchema,
   callbackQuerySchema,
 } from "@/validators/onboarding.validator";
+import { idempotencyKeySchema } from "@/validators/transfer.validator";
 
 export class OnboardingController {
   constructor(private readonly onboardingService: Pick<OnboardingService, "start" | "requestConsent" | "handleCallback" | "getStatus">) { }
@@ -29,16 +30,21 @@ export class OnboardingController {
 
       const userId = req.user?.id;
       if (!userId) throw new AppError("Access token is required", 401);
+      const key = idempotencyKeySchema.optional().safeParse(req.get("Idempotency-Key"));
+      if (!key.success) throw new AppError("Invalid Idempotency-Key", 400);
       // 3. Delegate to service
       const result = await this.onboardingService.start({
         walletAddressUrl: parsed.data.walletAddressUrl,
         clientId: parsed.data.clientId,
         userId,
+        idempotencyKey: key.data,
       });
 
       // 4. Respond
-      sendSuccess(res, result, 201);
+      if (key.data) res.setHeader("Idempotency-Replayed", String(result.idempotencyReplayed ?? false));
+      sendSuccess(res, result, result.idempotencyReplayed ? 200 : 201);
     } catch (error) {
+      if (error instanceof AppError && error.statusCode === 503) res.setHeader("Retry-After", "2");
       next(error);
     }
   };

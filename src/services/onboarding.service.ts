@@ -1,20 +1,36 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isPendingGrant, isFinalizedGrantWithSubject, OpenPaymentsClientError } from "@interledger/open-payments";
 import { AppError } from "@/utils/appError";
 import { SESSION_TTL_MS } from "@/constants/onboarding";
 import type { OnboardingServiceDependencies, OnboardingSession, OnboardingStartInput, OnboardingStatusResponse, OnboardingCallbackResult } from "@/types/onboarding";
 import type { FinalizedOwnership } from "@/types/grant";
-import { callbackFingerprint, verifyInteractionHash } from "@/utils/grant-interaction";
+import { callbackFingerprint, createInteractionNonce, verifyInteractionHash } from "@/utils/grant-interaction";
 import { getOnboardingReturnUrl } from "@/config/onboarding";
-import { validateProviderUrl } from "@/utils/provider-url";
+import { validateProviderUrl, validateWalletAddress } from "@/utils/provider-url";
+import type { OnboardingRequestRecord } from "@/repositories/onboarding-request.repository";
+import { idempotencyKeySchema } from "@/validators/transfer.validator";
 
 export class OnboardingService {
   constructor(private readonly deps: OnboardingServiceDependencies) {}
   async start(input: OnboardingStartInput): Promise<OnboardingStatusResponse> {
+    input = { ...input, walletAddressUrl: validateWalletAddress(input.walletAddressUrl) };
     const clientId = input.clientId ?? "api";
     const returnUrl = getOnboardingReturnUrl(this.deps.config, clientId);
+    const requestHash = createHash("sha256").update(JSON.stringify([input.walletAddressUrl, clientId, returnUrl])).digest("hex");
+    let keyHash: string | undefined;
+    if (input.idempotencyKey !== undefined) {
+      if (!idempotencyKeySchema.safeParse(input.idempotencyKey).success) throw new AppError("Invalid Idempotency-Key", 400);
+      keyHash = createHash("sha256").update(input.idempotencyKey).digest("hex");
+      const request = await this.deps.onboardingRequestRepository.find(input.userId, keyHash);
+      if (request) return this.replayStart(request, requestHash, input.userId);
+    }
     const existing = await this.deps.onboardingRepository.findActiveByUserId(input.userId);
     if (existing) {
+      if (keyHash) {
+        const concurrent = await this.deps.onboardingRequestRepository.find(input.userId, keyHash);
+        if (concurrent) return this.replayStart(concurrent, requestHash, input.userId);
+        throw new AppError("An onboarding session is already active; reuse its Idempotency-Key", 409);
+      }
       if (existing.walletAddressUrl !== input.walletAddressUrl || existing.clientId !== clientId || existing.returnUrl !== returnUrl) throw new AppError("An onboarding session is already active", 409);
       return this.response(existing);
     }
@@ -22,7 +38,22 @@ export class OnboardingService {
     const now = new Date();
     const session: OnboardingSession = { id: `onb_${randomUUID()}`, userId: input.userId, walletAddressUrl: input.walletAddressUrl,
       clientId, returnUrl, status: "PENDING", createdAt: now, updatedAt: now };
-    await this.deps.onboardingRepository.save(session);
+    let reservation: OnboardingRequestRecord | undefined;
+    if (keyHash) {
+      const result = await this.deps.onboardingRequestRepository.reserve({ user_id: input.userId, key_hash: keyHash,
+        request_hash: requestHash, session_id: session.id, session_created_at: now });
+      if (!result.created) return this.replayStart(result.record, requestHash, input.userId);
+      reservation = result.record;
+    }
+    try { await this.deps.onboardingRepository.save(session); }
+    catch (error) {
+      // Only a confirmed admission conflict can discard the new reservation.
+      // An uncertain Redis acknowledgement retains its stable session identity.
+      if (reservation && error instanceof AppError && error.statusCode === 409) {
+        await this.deps.onboardingRequestRepository.remove(reservation);
+      }
+      throw error;
+    }
     let phase: "client_setup" | "wallet_lookup" | "provider_url_validation" | "session_persistence" = "client_setup";
     try {
       const client = await this.deps.getOpenPaymentsClient();
@@ -30,10 +61,11 @@ export class OnboardingService {
       const resolved = await client.walletAddress.get({ url: input.walletAddressUrl });
       phase = "provider_url_validation";
       for (const url of [resolved.id, resolved.authServer, resolved.resourceServer]) validateProviderUrl(url);
-      const wallet = { id: resolved.id, assetCode: resolved.assetCode, assetScale: resolved.assetScale,
+      const wallet = { id: validateWalletAddress(resolved.id), assetCode: resolved.assetCode, assetScale: resolved.assetScale,
         authServer: resolved.authServer, resourceServer: resolved.resourceServer, publicName: resolved.publicName };
       phase = "session_persistence";
-      return this.response(await this.deps.onboardingRepository.transition(session.id, "PENDING", { status: "WALLET_RESOLVED", wallet }));
+      return { ...this.response(await this.deps.onboardingRepository.transition(session.id, "PENDING", { status: "WALLET_RESOLVED", wallet })),
+        ...(keyHash ? { idempotencyReplayed: false } : {}) };
     } catch (error) {
       const nodeCode = error instanceof Error && "code" in error ? error.code : undefined;
       const reason = phase === "client_setup" && ["ENOENT", "EACCES", "EPERM"].includes(String(nodeCode))
@@ -49,6 +81,18 @@ export class OnboardingService {
       throw new AppError("Could not resolve wallet", 422);
     }
   }
+  private async replayStart(record: OnboardingRequestRecord, requestHash: string, userId: string): Promise<OnboardingStatusResponse> {
+    if (record.request_hash !== requestHash) throw new AppError("Idempotency-Key belongs to a different onboarding request", 409);
+    try { return { ...await this.getStatus(record.session_id, userId), idempotencyReplayed: true }; }
+    catch (error) {
+      if (error instanceof AppError && error.statusCode === 404) {
+        if (record.session_created_at.getTime() + SESSION_TTL_MS <= Date.now()) throw new AppError("Onboarding expired; start with a new Idempotency-Key", 410);
+        throw new AppError("Onboarding is initializing; retry with the same Idempotency-Key", 503,
+          { sessionId: record.session_id, retryAfter: 2 });
+      }
+      throw error;
+    }
+  }
   async requestConsent(id: string, userId: string): Promise<OnboardingStatusResponse> {
     const s = await this.validSession(id, userId);
     if (s.status === "CONSENT_PENDING") return this.response(s);
@@ -58,7 +102,7 @@ export class OnboardingService {
       const client = await this.deps.getOpenPaymentsClient();
       const callback = new URL("/api/v1/onboarding/callback", this.deps.config.apiPublicUrl);
       callback.searchParams.set("session_id", id);
-      const clientNonce = randomBytes(32).toString("base64url");
+      const clientNonce = createInteractionNonce();
       // The SDK sends new URL(url).href; use that exact URI in the GNAP hash.
       const grantRequestUrl = new URL(s.wallet!.authServer).href;
       const pendingGrant = await client.grant.request({ url: grantRequestUrl }, {
@@ -110,10 +154,11 @@ export class OnboardingService {
       try { await this.deps.onboardingRepository.transition(id, "FINALIZING", { status: "COMPLETED", completedAt: new Date(),
         pendingGrant: undefined, interaction: undefined, redirectUrl: undefined }); } catch { /* Recover from PostgreSQL. */ }
       return this.completedCallback(id, (await this.deps.grantRepository.getFinalized(id))!);
-    } catch {
+    } catch (error) {
       const committed = await this.deps.grantRepository.getFinalized(id);
       if (committed?.callbackFingerprint === fingerprint) return this.completedCallback(id, committed);
       await this.fail(claimed, "Ownership verification failed");
+      if (error instanceof AppError && error.statusCode === 409) throw error;
       throw new AppError("Ownership verification failed; check onboarding status", 502);
     }
   }
@@ -121,7 +166,7 @@ export class OnboardingService {
     const durable = await this.deps.grantRepository.getFinalized(id);
     if (durable) {
       if (durable.userId !== userId) throw new AppError("Onboarding not found", 404);
-      return { sessionId: id, status: "COMPLETED", linkedAt: durable.completedAt, clientId: durable.clientId, expiresAt: durable.completedAt };
+      return { sessionId: id, status: "COMPLETED", linkedAt: durable.completedAt, clientId: durable.clientId, expiresAt: null };
     }
     let s = await this.validSession(id, userId);
     if (["FINALIZING", "CONSENT_REQUESTING"].includes(s.status) && Date.now() - s.updatedAt.getTime() > 60000) {
@@ -140,7 +185,7 @@ export class OnboardingService {
   }
   private response(s: OnboardingSession): OnboardingStatusResponse {
     return { sessionId: s.id, status: s.status, wallet: s.wallet, redirectUrl: s.redirectUrl, linkedAt: s.completedAt,
-      clientId: s.clientId, expiresAt: new Date(s.createdAt.getTime() + SESSION_TTL_MS) };
+      clientId: s.clientId, expiresAt: s.status === "COMPLETED" ? null : new Date(s.createdAt.getTime() + SESSION_TTL_MS) };
   }
   private async fail(s: OnboardingSession, reason: string) {
     try { await this.deps.onboardingRepository.transition(s.id, s.status, { status: "FAILED", failureReason: reason,

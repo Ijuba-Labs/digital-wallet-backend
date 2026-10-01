@@ -1,3 +1,5 @@
+import { env } from "@/config/env";
+
 /**
  * Onboarding session lifecycle states.
  * Enforces valid transitions via the state machine in OnboardingService.
@@ -44,6 +46,5 @@ export const VALID_TRANSITIONS: Record<
   EXPIRED: [], // terminal
 };
 
-/** How long an onboarding session stays valid (15 minutes) */
-const sessionMinutes = Number(process.env.SESSION_TTL_MS) || 15;
-export const SESSION_TTL_MS = sessionMinutes * 60 * 1000;
+/** Validated minutes; the legacy environment name also means minutes. */
+export const SESSION_TTL_MS = env.ONBOARDING_SESSION_TTL_MINUTES * 60 * 1000;

@@ -88,7 +88,8 @@ const tunnels: Tunnel[] = [
 const createProxy = (name: string, targetPort: number, proxyPort: number) => {
   const server = http.createServer((req, res) => {
     const start = Date.now();
-    logger.info(`--> [${name}] ${req.method} ${req.url}`);
+    const pathname = (req.url ?? "/").split(/[?#]/, 1)[0];
+    logger.info(`--> [${name}] ${req.method} ${pathname}`);
 
     const forwardReq = http.request(
       {
@@ -101,7 +102,7 @@ const createProxy = (name: string, targetPort: number, proxyPort: number) => {
       (targetRes) => {
         const duration = Date.now() - start;
         logger.info(
-          `<-- [${name}] ${req.method} ${req.url} ${targetRes.statusCode} (${duration}ms)`,
+          `<-- [${name}] ${req.method} ${pathname} ${targetRes.statusCode} (${duration}ms)`,
         );
         res.writeHead(targetRes.statusCode || 500, targetRes.headers);
         targetRes.pipe(res);
@@ -110,7 +111,7 @@ const createProxy = (name: string, targetPort: number, proxyPort: number) => {
 
     forwardReq.on("error", (err) => {
       logger.error(
-        { err },
+        { event: "proxy_forward_failed", pathname, code: (err as NodeJS.ErrnoException).code },
         `[${name}] Failed to forward to port ${targetPort}`,
       );
       res.writeHead(502, { "Content-Type": "application/json" });

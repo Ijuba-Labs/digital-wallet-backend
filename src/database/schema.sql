@@ -1,7 +1,7 @@
 CREATE TYPE account_type AS ENUM ('USER', 'SYSTEM_RESERVE', 'MERCHANT');
 CREATE TYPE transaction_status AS ENUM ('POSTED', 'PENDING', 'VOIDED');
 CREATE TYPE user_status AS ENUM ('ACTIVE', 'SUSPENDED', 'PENDING_VERIFICATION');
-CREATE TYPE wallet_status AS ENUM ('ACTIVE', 'REVOKED', 'EXPIRED');
+CREATE TYPE wallet_link_status AS ENUM ('LINKED', 'UNLINKED');
 CREATE TYPE reward_events_type AS ENUM ('EARNED', 'REDEEMED', 'EXPIRED', 'ADJUSTMENT');
 
 CREATE TABLE users (
@@ -27,7 +27,7 @@ CREATE TABLE wallets (
     asset_scale SMALLINT NOT NULL DEFAULT 2,
     auth_server TEXT NOT NULL,        -- e.g. "https://rafiki-auth.interledger-test.dev"
     resource_server TEXT NOT NULL,    -- e.g. "https://ilp.interledger-test.dev"
-    status wallet_status NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'REVOKED', 'EXPIRED'
+    status wallet_link_status NOT NULL DEFAULT 'LINKED', -- Linkage only; credentials have independent lifecycles.
     is_default BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -37,32 +37,51 @@ CREATE TABLE wallets (
     CONSTRAINT uq_user_wallet UNIQUE(user_id, wallet_address_url)
 );
 
+CREATE UNIQUE INDEX uq_wallets_active_address ON wallets(wallet_address_url) WHERE status = 'LINKED';
+
 CREATE INDEX idx_wallets_user ON wallets(user_id);
 
--- Durable ownership attestations and optional reusable credentials; never pending grants.
-CREATE TABLE wallet_grants (
+-- Immutable ownership proof; contains no authorization or credential lifecycle.
+CREATE TABLE wallet_ownership_attestations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     wallet_id UUID NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
     transaction_id TEXT UNIQUE NOT NULL,
-    purpose TEXT NOT NULL CHECK (purpose IN ('ONBOARDING', 'REUSABLE_ACCESS')),
-    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'EXPIRED', 'REVOKED')),
-    access_token_enc TEXT,
-    key_id TEXT,
-    manage_url TEXT,
-    access JSONB NOT NULL DEFAULT '[]',
-    expires_at TIMESTAMPTZ,
-    verified_subject_uri TEXT,
-    verified_at TIMESTAMPTZ,
+    verified_subject_uri TEXT NOT NULL,
+    verified_at TIMESTAMPTZ NOT NULL,
     callback_fingerprint CHAR(64) NOT NULL,
     client_id TEXT NOT NULL DEFAULT 'api',
     return_url TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK (purpose <> 'ONBOARDING' OR (verified_subject_uri IS NOT NULL AND verified_at IS NOT NULL)),
-    CHECK ((access_token_enc IS NULL) = (key_id IS NULL)),
-    CHECK (purpose <> 'REUSABLE_ACCESS' OR status <> 'ACTIVE' OR (access_token_enc IS NOT NULL AND manage_url IS NOT NULL))
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_wallet_grants_wallet ON wallet_grants(wallet_id);
+CREATE INDEX idx_wallet_ownership_wallet ON wallet_ownership_attestations(wallet_id);
+
+-- Optional reusable authority, independent of wallet ownership/linkage.
+CREATE TABLE wallet_access_grants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id UUID NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+    transaction_id TEXT UNIQUE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','EXPIRED','REVOKED','UNAVAILABLE')),
+    access_token_enc TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    manage_url TEXT NOT NULL,
+    access JSONB NOT NULL,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_wallet_access_wallet ON wallet_access_grants(wallet_id);
+
+-- Durable mobile retry identity; callback/session secrets remain in Redis.
+CREATE TABLE onboarding_requests (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key_hash CHAR(64) NOT NULL,
+    request_hash CHAR(64) NOT NULL,
+    session_id TEXT NOT NULL,
+    session_created_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, key_hash)
+);
+CREATE INDEX idx_onboarding_requests_session ON onboarding_requests(session_id);
 
 -- Accounts (Users, Merchants, and System Liquidity Reserves)
 CREATE TABLE accounts (
@@ -123,7 +142,7 @@ CREATE INDEX idx_reward_events_user ON reward_events(user_id, created_at DESC);
 CREATE FUNCTION valid_payment_amount(amount JSONB, positive BOOLEAN) RETURNS BOOLEAN
 LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 BEGIN
-  IF jsonb_typeof(amount) <> 'object' OR NOT amount ?& ARRAY['value','assetCode','assetScale']
+  IF jsonb_typeof(amount) <> 'object' OR NOT jsonb_exists_all(amount, ARRAY['value','assetCode','assetScale'])
      OR jsonb_typeof(amount->'value') <> 'string'
      OR (amount->>'value') !~ '^(0|[1-9][0-9]{0,19})$'
      OR jsonb_typeof(amount->'assetCode') <> 'string'
@@ -170,15 +189,17 @@ CREATE TABLE transfers (
     lease_until TIMESTAMPTZ,
     cleanup_state TEXT NOT NULL DEFAULT 'PENDING' CHECK (cleanup_state IN ('PENDING','DONE')),
     cleanup_error TEXT,
+    incoming_completed_at TIMESTAMPTZ,
     state_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     UNIQUE(sender_user_id, idempotency_key),
     CHECK (sender_user_id <> recipient_user_id),
-    CHECK (sent_amount IS NULL OR sent_amount->>'assetCode' <> debit_amount->>'assetCode'
-      OR sent_amount->>'assetScale' <> debit_amount->>'assetScale'
-      OR (sent_amount->>'value')::numeric <= (debit_amount->>'value')::numeric),
+    CONSTRAINT transfers_sent_amount_matches_debit CHECK (sent_amount IS NULL OR (
+      sent_amount->>'assetCode' = debit_amount->>'assetCode'
+      AND sent_amount->>'assetScale' = debit_amount->>'assetScale'
+      AND (sent_amount->>'value')::numeric <= (debit_amount->>'value')::numeric)),
     CHECK (received_amount IS NULL OR (receive_amount IS NOT NULL
       AND received_amount->>'assetCode' = receive_amount->>'assetCode'
       AND received_amount->>'assetScale' = receive_amount->>'assetScale'))
@@ -189,7 +210,7 @@ CREATE INDEX idx_transfers_work ON transfers(next_attempt_at) WHERE next_attempt
 
 CREATE TABLE transfer_credentials (
     transfer_id UUID NOT NULL REFERENCES transfers(id),
-    purpose TEXT NOT NULL CHECK (purpose IN ('incoming','outgoing')),
+    purpose TEXT NOT NULL CHECK (purpose IN ('incoming','outgoing','incoming-create','quote')),
     token_enc TEXT NOT NULL,
     key_id TEXT NOT NULL,
     manage_url TEXT NOT NULL,
@@ -197,6 +218,6 @@ CREATE TABLE transfer_credentials (
     expires_at TIMESTAMPTZ,
     rotate_after TIMESTAMPTZ,
     generation INTEGER NOT NULL DEFAULT 1,
-    state TEXT NOT NULL DEFAULT 'READY' CHECK (state IN ('READY','ROTATING','UNAVAILABLE')),
+    state TEXT NOT NULL DEFAULT 'READY' CHECK (state IN ('READY','ROTATING','UNAVAILABLE','REJECTED')),
     PRIMARY KEY (transfer_id, purpose)
 );

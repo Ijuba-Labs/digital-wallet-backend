@@ -7,7 +7,7 @@ export class TransferRepository implements TransferRepositoryInterface {
   constructor(private readonly db: Knex) {}
   async findWallet(userId: string, walletId?: string): Promise<TransferWallet | undefined> {
     const q = this.db("wallets as w").join("users as u", "u.id", "w.user_id")
-      .where({ "w.user_id": userId, "w.status": "ACTIVE", "u.status": "ACTIVE" }).whereNotNull("w.verified_at");
+      .where({ "w.user_id": userId, "w.status": "LINKED", "u.status": "ACTIVE" }).whereNotNull("w.verified_at");
     if (walletId) q.andWhere("w.id", walletId);
     return q.orderBy("w.is_default", "desc").orderBy("w.created_at", "desc").orderBy("w.id", "asc")
       .first<TransferWallet>("w.id", "w.wallet_address_url as walletAddressUrl", "w.asset_code as assetCode", "w.asset_scale as assetScale");

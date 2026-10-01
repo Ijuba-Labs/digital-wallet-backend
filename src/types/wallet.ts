@@ -4,7 +4,7 @@ export interface LinkedWallet {
   publicName: string | null;
   assetCode: string;
   assetScale: number;
-  status: "ACTIVE" | "REVOKED" | "EXPIRED";
+  status: "LINKED" | "UNLINKED";
   isDefault: boolean;
   verifiedAt: Date;
   createdAt: Date;

@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "packageManager": "pnpm@9.15.4",
   "description": "Backend API service",
+  "license": "MIT",
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
@@ -25,7 +26,10 @@
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "worker": "node dist/worker.js",
     "worker:dev": "tsx watch src/worker.ts",
-    "keys:reencrypt": "node dist/rekey.js"
+    "keys:reencrypt": "node dist/rekey.js",
+    "localenv:reset": "node scripts/reset-development.mjs",
+    "source:archive": "node scripts/source-archive.mjs",
+    "secrets:scan": "node scripts/scan-secrets.mjs"
   },
   "dependencies": {
     "@apollo/client": "^4.3.0",

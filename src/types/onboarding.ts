@@ -7,12 +7,14 @@ import { WalletAddress, PendingGrant } from "@interledger/open-payments";
 import Redis from "ioredis";
 import type { OnboardingClientId, OnboardingConfig } from "@/config/onboarding";
 import type { GrantInteraction } from "@/utils/grant-interaction";
+import type { OnboardingRequestRepository } from "@/repositories/onboarding-request.repository";
 
 /** Input DTO — what the client sends to start onboarding */
 export interface OnboardingStartInput {
   walletAddressUrl: string;
   userId: string; // from auth middleware after signup
   clientId?: OnboardingClientId;
+  idempotencyKey?: string;
 }
 
 /** The persisted onboarding session */
@@ -51,7 +53,8 @@ export interface OnboardingStatusResponse {
   redirectUrl?: string;
   linkedAt?: Date;
   clientId: OnboardingClientId;
-  expiresAt: Date;
+  expiresAt: Date | null;
+  idempotencyReplayed?: boolean;
 }
 
 export type OnboardingCallbackResult = {
@@ -65,6 +68,7 @@ export type OnboardingCallbackResult = {
 export type OnboardingServiceDependencies = {
   onboardingRepository: Pick<OnboardingRepository, "save" | "findById" | "findActiveByUserId" | "transition">;
   grantRepository: Pick<GrantRepository, "saveOwnership" | "getFinalized">;
+  onboardingRequestRepository: Pick<OnboardingRequestRepository, "find" | "reserve" | "remove">;
   getOpenPaymentsClient: typeof getOpenPaymentsClient;
   logger: typeof logger;
   config: OnboardingConfig;
