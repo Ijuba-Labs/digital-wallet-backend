@@ -156,7 +156,7 @@ export class OnboardingService {
       return this.completedCallback(id, (await this.deps.grantRepository.getFinalized(id))!);
     } catch (error) {
       const committed = await this.deps.grantRepository.getFinalized(id);
-      if (committed?.callbackFingerprint === fingerprint) return this.completedCallback(id, committed);
+      if (committed && committed.callbackFingerprint === fingerprint) return this.completedCallback(id, committed);
       await this.fail(claimed, "Ownership verification failed");
       if (error instanceof AppError && error.statusCode === 409) throw error;
       throw new AppError("Ownership verification failed; check onboarding status", 502);
