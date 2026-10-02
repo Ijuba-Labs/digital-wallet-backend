@@ -2,6 +2,8 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 COPY package.json pnpm-lock.yaml ./
+COPY packages/open-payments-primitives ./packages/open-payments-primitives
+RUN cd packages/open-payments-primitives && pnpm install --frozen-lockfile && pnpm build
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src

@@ -20,6 +20,8 @@ USER node
 
 # Copy dependency manifests
 COPY --chown=node:node pnpm-lock.yaml package.json ./
+COPY --chown=node:node packages/open-payments-primitives ./packages/open-payments-primitives
+RUN cd packages/open-payments-primitives && pnpm install --frozen-lockfile && pnpm build
 
 # Install ALL dependencies (using cache)
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store,uid=1000,gid=1000 \

@@ -18,7 +18,7 @@ const variablesDir = path.join(
 );
 
 const spawnDatabase = (): Promise<StartedPostgreSqlContainer> => {
-    return new PostgreSqlContainer("postgres:18-bookworm")
+    return new PostgreSqlContainer(process.env.TEST_POSTGRES_IMAGE ?? "postgres:18-bookworm")
         .withDatabase(TEST_DATABASE)
         .withUsername(TEST_USERNAME)
         .withPassword(TEST_PASSWORD)
