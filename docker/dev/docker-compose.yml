@@ -12,6 +12,8 @@ services:
           path: ../../pnpm-lock.yaml
         - action: rebuild
           path: ../../Dockerfile.dev
+        - action: rebuild
+          path: ../../packages/open-payments-primitives
         - action: sync+restart
           path: ../../src
           target: /home/backend/src
@@ -34,6 +36,8 @@ services:
           path: ../../package.json
         - action: rebuild
           path: ../../pnpm-lock.yaml
+        - action: rebuild
+          path: ../../packages/open-payments-primitives
         - action: sync+restart
           path: ../../src
           target: /home/backend/src

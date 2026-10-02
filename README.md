@@ -1,6 +1,6 @@
 # Digital Wallet Backend
 
-[![Backend CI](https://github.com/n-sipho/digital-wallet-backend/actions/workflows/backend.yml/badge.svg)](https://github.com/n-sipho/digital-wallet-backend/actions/workflows/backend.yml)
+[![Backend CI](https://github.com/Ijuba-Labs/digital-wallet-backend/actions/workflows/backend.yml/badge.svg)](https://github.com/Ijuba-Labs/digital-wallet-backend/actions/workflows/backend.yml)
 [![Coverage Status](https://coveralls.io/repos/github/n-sipho/digital-wallet-backend/badge.svg?branch=main)](https://coveralls.io/github/n-sipho/digital-wallet-backend?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -13,9 +13,9 @@ You will need Node.js 24, pnpm 9.15.4, Docker with Docker Compose Watch support,
 1. Clone the repository and install dependencies:
 
    ```bash
-   git clone https://github.com/n-sipho/digital-wallet-backend.git
+   git clone https://github.com/Ijuba-Labs/digital-wallet-backend.git
    cd digital-wallet-backend
-   pnpm install
+   pnpm install:local
    cp .env.example .env
    ```
 
@@ -111,3 +111,5 @@ For project credits, you can use: “Uses Digital Wallet Backend by [n-sipho](ht
 ## Private checkout identity delegation
 
 The private checkout service is deployed independently and is not a dependency of this public backend. Shared MIT-licensed payment utilities live in `packages/open-payments-primitives`. `GET /api/v1/identity` returns the authenticated customer ID; `GET /internal/users/:id/wallets` requires a separate `CHECKOUT_IDENTITY_SERVICE_KEY` of at least 32 characters and exposes only verified linked wallets for an active customer. Configure that key in both services without sharing JWT secrets or database credentials. Public installs and CI require no private-repository token.
+
+The shared utilities are published as [`@ijuba-labs/payment-primitives`](https://github.com/Ijuba-Labs/digital-wallet-backend/pkgs/npm/payment-primitives). Use `pnpm install:local` while developing: it builds and links the folder using an ignored development lockfile. Production and CI use the pinned registry version in the committed manifest and lockfile. See [package installation and releases](docs/PAYMENT_PACKAGE.md).
