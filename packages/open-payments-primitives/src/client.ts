@@ -16,40 +16,40 @@ export const wrapOpenPaymentsClient = (client: AuthenticatedClient, { validatePr
   };
   return {
     walletAddress: {
-      get: async (args) => {
+      get: async (...[args]: Parameters<typeof client.walletAddress.get>) => {
         const wallet = await client.walletAddress.get({ ...args, url: validateWalletAddress(args.url) });
         validateWalletAddress(wallet.id);
         validateProviderUrl(wallet.authServer);
         validateProviderUrl(wallet.resourceServer);
         return wallet;
       },
-      getKeys: (args) => client.walletAddress.getKeys(resource(args)),
-      getDIDDocument: (args) => client.walletAddress.getDIDDocument(resource(args)),
+      getKeys: (...[args]: Parameters<typeof client.walletAddress.getKeys>) => client.walletAddress.getKeys(resource(args)),
+      getDIDDocument: (...[args]: Parameters<typeof client.walletAddress.getDIDDocument>) => client.walletAddress.getDIDDocument(resource(args)),
     },
     grant: {
-      request: (args, body, override) => client.grant.request(resource(args), body, override),
-      continue: (args, body) => client.grant.continue(resource(args), body),
-      cancel: (args) => client.grant.cancel(resource(args)),
+      request: (...[args, body, override]: Parameters<typeof client.grant.request>) => client.grant.request(resource(args), body, override),
+      continue: (...[args, body]: Parameters<typeof client.grant.continue>) => client.grant.continue(resource(args), body),
+      cancel: (...[args]: Parameters<typeof client.grant.cancel>) => client.grant.cancel(resource(args)),
     },
     token: {
-      rotate: (args) => client.token.rotate(resource(args)),
-      revoke: (args) => client.token.revoke(resource(args)),
+      rotate: (...[args]: Parameters<typeof client.token.rotate>) => client.token.rotate(resource(args)),
+      revoke: (...[args]: Parameters<typeof client.token.revoke>) => client.token.revoke(resource(args)),
     },
     incomingPayment: {
-      get: (args) => client.incomingPayment.get(resource(args)),
-      getPublic: (args) => client.incomingPayment.getPublic(resource(args)),
-      complete: (args) => client.incomingPayment.complete(resource(args)),
-      list: (args, pagination) => client.incomingPayment.list(collection(args), pagination),
-      create: (args, body) => {
+      get: (...[args]: Parameters<typeof client.incomingPayment.get>) => client.incomingPayment.get(resource(args)),
+      getPublic: (...[args]: Parameters<typeof client.incomingPayment.getPublic>) => client.incomingPayment.getPublic(resource(args)),
+      complete: (...[args]: Parameters<typeof client.incomingPayment.complete>) => client.incomingPayment.complete(resource(args)),
+      list: (...[args, pagination]: Parameters<typeof client.incomingPayment.list>) => client.incomingPayment.list(collection(args), pagination),
+      create: (...[args, body]: Parameters<typeof client.incomingPayment.create>) => {
         validateWalletAddress(body.walletAddress);
         return client.incomingPayment.create(resource(args), body);
       },
     },
     outgoingPayment: {
-      get: (args) => client.outgoingPayment.get(resource(args)),
-      getGrantSpentAmounts: (args) => client.outgoingPayment.getGrantSpentAmounts(resource(args)),
-      list: (args, pagination) => client.outgoingPayment.list(collection(args), pagination),
-      create: (args, body) => {
+      get: (...[args]: Parameters<typeof client.outgoingPayment.get>) => client.outgoingPayment.get(resource(args)),
+      getGrantSpentAmounts: (...[args]: Parameters<typeof client.outgoingPayment.getGrantSpentAmounts>) => client.outgoingPayment.getGrantSpentAmounts(resource(args)),
+      list: (...[args, pagination]: Parameters<typeof client.outgoingPayment.list>) => client.outgoingPayment.list(collection(args), pagination),
+      create: (...[args, body]: Parameters<typeof client.outgoingPayment.create>) => {
         validateWalletAddress(body.walletAddress);
         if ("quoteId" in body) validateProviderUrl(body.quoteId);
         else validateProviderUrl(body.incomingPayment);
@@ -57,8 +57,8 @@ export const wrapOpenPaymentsClient = (client: AuthenticatedClient, { validatePr
       },
     },
     quote: {
-      get: (args) => client.quote.get(resource(args)),
-      create: (args, body) => {
+      get: (...[args]: Parameters<typeof client.quote.get>) => client.quote.get(resource(args)),
+      create: (...[args, body]: Parameters<typeof client.quote.create>) => {
         validateWalletAddress(body.walletAddress);
         if (typeof body.receiver === "string") validateProviderUrl(body.receiver);
         return client.quote.create(resource(args), body);
