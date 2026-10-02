@@ -97,7 +97,7 @@ pnpm typecheck
 pnpm build
 ```
 
-## Contributing
+<!-- ## Contributing
 
 See the [developer guide](docs/DEVELOPER_GUIDE.md) for architecture, infrastructure configuration, migrations, encryption, and payment integration details. Run the tests and build checks before submitting a pull request.
 
@@ -105,4 +105,9 @@ See the [developer guide](docs/DEVELOPER_GUIDE.md) for architecture, infrastruct
 
 Released under the [MIT License](LICENSE). You may use, modify, and distribute this backend free of charge, including commercially. Include the copyright and license notice in copies or substantial portions of the backend.
 
-For project credits, you can use: “Uses Digital Wallet Backend by [n-sipho](https://github.com/n-sipho/digital-wallet-backend).” Public credit is appreciated; the MIT requirement is to retain the copyright and license notice.
+For project credits, you can use: “Uses Digital Wallet Backend by [n-sipho](https://github.com/n-sipho/digital-wallet-backend).” Public credit is appreciated; the MIT requirement is to retain the copyright and license notice. -->
+
+
+## Private checkout identity delegation
+
+The private checkout service is deployed independently and is not a dependency of this public backend. Shared MIT-licensed payment utilities live in `packages/open-payments-primitives`. `GET /api/v1/identity` returns the authenticated customer ID; `GET /internal/users/:id/wallets` requires a separate `CHECKOUT_IDENTITY_SERVICE_KEY` of at least 32 characters and exposes only verified linked wallets for an active customer. Configure that key in both services without sharing JWT secrets or database credentials. Public installs and CI require no private-repository token.
