@@ -52,7 +52,7 @@
     "pino-http": "^11.0.0",
     "yaml": "^2.9.1",
     "zod": "^4.5.4",
-    "@open-rewards/payment-primitives": "file:packages/open-payments-primitives"
+    "@ijuba-labs/payment-primitives": "file:packages/open-payments-primitives"
   },
   "devDependencies": {
     "@faker-js/faker": "^10.6.0",
