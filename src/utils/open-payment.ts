@@ -1,4 +1,4 @@
-import { wrapOpenPaymentsClient as sharedWrapper } from "@open-rewards/payment-primitives";
+import { wrapOpenPaymentsClient as sharedWrapper } from "@ijuba-labs/payment-primitives";
 import { createAuthenticatedClient, type AuthenticatedClient } from "@interledger/open-payments";
 import { readFileSync } from "node:fs";
 import { validateProviderUrl, validateWalletAddress } from "./provider-url";

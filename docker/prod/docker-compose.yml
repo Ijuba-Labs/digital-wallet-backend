@@ -2,6 +2,7 @@ services:
   wallet-api:
     build:
       dockerfile: Dockerfile
+      secrets: [github_packages_token]
     command: node dist/server.js
     restart: unless-stopped
     environment:
@@ -12,6 +13,7 @@ services:
   payment-worker:
     build:
       dockerfile: Dockerfile
+      secrets: [github_packages_token]
     command: node dist/worker.js
     restart: unless-stopped
     stop_grace_period: 60s
@@ -23,9 +25,12 @@ services:
   db-migrate:
     build:
       dockerfile: Dockerfile
+      secrets: [github_packages_token]
     environment:
       NODE_ENV: production
 secrets:
+  github_packages_token:
+    environment: NODE_AUTH_TOKEN
   payment_keyring:
     file: ${PAYMENT_KEYRING_HOST_PATH:?Set PAYMENT_KEYRING_HOST_PATH}
   open_payments_private_key:

@@ -11,15 +11,15 @@ importers:
       '@apollo/client':
         specifier: ^4.3.0
         version: 4.3.0(graphql@17.0.2)(rxjs@7.8.2)
+      '@ijuba-labs/payment-primitives':
+        specifier: 0.1.0
+        version: 0.1.0
       '@interledger/open-payments':
         specifier: ^7.4.0
         version: 7.4.0
       '@ngrok/ngrok':
         specifier: ^1.7.0
         version: 1.7.0
-      '@open-rewards/payment-primitives':
-        specifier: file:packages/open-payments-primitives
-        version: file:packages/open-payments-primitives
       bcrypt:
         specifier: ^6.0.0
         version: 6.0.0
@@ -524,6 +524,9 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
+  '@ijuba-labs/payment-primitives@0.1.0':
+    resolution: {integrity: sha512-fUp2m/G7A3cXO4bNKYBP+5xhYdbw+WmXVC0Kr5O6Srh8Iu5GG9JE9oluUR8pvJHsTemrbTRwzLO3b3SXyHPtWA==, tarball: https://npm.pkg.github.com/download/@ijuba-labs/payment-primitives/0.1.0/8ed23412bd191aa42c40109915a46e4e16ae46b5}
+
   '@interledger/http-signature-utils@2.0.3':
     resolution: {integrity: sha512-/vn6+FxZ3g1A5ZC3vOVivjFns5A6F4lhEmdAGg3W9mD2uADXI575rIBcMdqI3wTOJo7qOXRutPXOG/jXONFs/Q==}
 
@@ -790,9 +793,6 @@ packages:
 
   '@open-draft/until@2.1.0':
     resolution: {integrity: sha512-U69T3ItWHvLwGg5eJ0n3I62nWuE6ilHlmz7zM0npLBRvPRd7e6NYmg54vvRtP5mZG7kZqZCFVdsTWo7BPtBujg==}
-
-  '@open-rewards/payment-primitives@file:packages/open-payments-primitives':
-    resolution: {directory: packages/open-payments-primitives, type: directory}
 
   '@paralleldrive/cuid2@2.3.1':
     resolution: {integrity: sha512-XO7cAxhnTZl0Yggq6jOgjiOHhbgcO4NqFqwSmQpjK3b6TEE6Uj/jfSk6wzYyemh3+I0sHirKSetjQwn5cZktFw==}
@@ -3841,6 +3841,12 @@ snapshots:
       protobufjs: 7.6.6
       yargs: 17.7.3
 
+  '@ijuba-labs/payment-primitives@0.1.0':
+    dependencies:
+      '@interledger/open-payments': 7.4.0
+    transitivePeerDependencies:
+      - supports-color
+
   '@interledger/http-signature-utils@2.0.3':
     dependencies:
       http-message-signatures: 1.0.6
@@ -4248,12 +4254,6 @@ snapshots:
       outvariant: 1.4.3
 
   '@open-draft/until@2.1.0': {}
-
-  '@open-rewards/payment-primitives@file:packages/open-payments-primitives':
-    dependencies:
-      '@interledger/open-payments': 7.4.0
-    transitivePeerDependencies:
-      - supports-color
 
   '@paralleldrive/cuid2@2.3.1':
     dependencies:

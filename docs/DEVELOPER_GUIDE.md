@@ -24,7 +24,7 @@ This backend follows a layered modular architecture:
 
 ## Running without Docker
 
-Install dependencies with `pnpm install` and copy `.env.example` to `.env`. The template is configured for the Docker quick start; for host processes, change these values:
+Install dependencies with `pnpm install:local` and copy `.env.example` to `.env`. This builds and links the payment primitives folder without changing the production lockfile. For deployment, follow [package installation and releases](PAYMENT_PACKAGE.md). The template is configured for the Docker quick start; for host processes, change these values:
 
 ```dotenv
 DATABASE_URL=postgresql://wallet_dev:wallet_dev_password@localhost:5432/wallet_backend

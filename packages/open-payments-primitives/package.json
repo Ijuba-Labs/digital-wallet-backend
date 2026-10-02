@@ -1,8 +1,17 @@
 {
-  "name": "@open-rewards/payment-primitives",
+  "name": "@ijuba-labs/payment-primitives",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
+  "description": "Reusable Open Payments client, provider URL validation, GNAP proof verification, and grant encryption.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ijuba-Labs/digital-wallet-backend.git",
+    "directory": "packages/open-payments-primitives"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -17,7 +26,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepare": "pnpm build"
+    "prepare": "pnpm build",
+    "prepack": "pnpm build"
   },
   "dependencies": {
     "@interledger/open-payments": "^7.4.0"

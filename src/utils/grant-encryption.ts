@@ -1,5 +1,5 @@
-import { createCipher, type EncryptionKeyring } from "@open-rewards/payment-primitives";
-export type { EncryptionKeyring } from "@open-rewards/payment-primitives";
+import { createCipher, type EncryptionKeyring } from "@ijuba-labs/payment-primitives";
+export type { EncryptionKeyring } from "@ijuba-labs/payment-primitives";
 import { readFileSync } from "node:fs";
 
 

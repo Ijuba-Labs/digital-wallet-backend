@@ -50,3 +50,4 @@ LOCAL_SETUP_TEMPLATE.md
 secrets/
 *.tar.gz
 *.tgz
+.local/
