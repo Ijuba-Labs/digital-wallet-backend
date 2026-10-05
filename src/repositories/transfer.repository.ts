@@ -5,6 +5,17 @@ import { AppError } from "@/utils/appError";
 
 export class TransferRepository implements TransferRepositoryInterface {
   constructor(private readonly db: Knex) {}
+  async cancel(id: string, senderUserId: string, reason: "USER_CANCELLED" | "AUTHORIZATION_DECLINED" = "USER_CANCELLED"): Promise<TransferRecord | undefined> {
+    // Competes atomically with FINALIZING -> AUTHORIZED even while a callback
+    // holds a lease. The lease is retained so cleanup waits for that operation.
+    const [row] = await this.db("transfers").where({ id, sender_user_id: senderUserId })
+      .whereIn("status", ["CREATING", "AWAITING_AUTHORIZATION", "FINALIZING"])
+      .update({ status: "CANCELLED", error_code: reason, completed_at: this.db.fn.now(),
+        state_changed_at: this.db.fn.now(), updated_at: this.db.fn.now(),
+        cleanup_state: "PENDING", next_attempt_at: this.db.fn.now(), reconciliation_required: false })
+      .returning<TransferRecord[]>("*");
+    return row;
+  }
   async findWallet(userId: string, walletId?: string): Promise<TransferWallet | undefined> {
     const q = this.db("wallets as w").join("users as u", "u.id", "w.user_id")
       .where({ "w.user_id": userId, "w.status": "LINKED", "u.status": "ACTIVE" }).whereNotNull("w.verified_at");

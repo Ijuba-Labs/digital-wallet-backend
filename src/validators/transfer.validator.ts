@@ -19,6 +19,11 @@ export const transferCallbackSchema = z.object({
   interact_ref: z.string().min(1).max(2048).regex(/^[^\r\n]+$/),
   hash: z.string().min(1).max(128),
 });
+export const transferDeclineCallbackSchema = z.object({
+  transfer_id: transferIdSchema,
+  result: z.literal("grant_rejected"),
+  cancel_token: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
+});
 
 export const transferListSchema = z.object({
   limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(100)).default(20),

@@ -6,8 +6,10 @@ import { redisRouter } from "./redis.routes";
 import { createWalletRouter } from "./wallet.routes";
 import { createOnboardingRouter } from "./onboarding.routes";
 import { createTransferRouter } from "./transfer.routes";
+import { createLoyaltyRouter } from "./loyalty.routes";
+import { createRecipientRouter } from "./recipient.routes";
 
-export const createV1Router = ({ authController, onboardingController, walletController, transferController, rateLimits, requireAuth }: RouterDependencies) => {
+export const createV1Router = ({ authController, onboardingController, walletController, transferController, loyaltyService, recipientService, rateLimits, requireAuth }: RouterDependencies) => {
   const router = Router();
 
   router.use("/auth", createAuthRouter(authController));
@@ -16,6 +18,8 @@ export const createV1Router = ({ authController, onboardingController, walletCon
   router.use("/wallet", createWalletRouter(requireAuth, walletController));
   router.use("/onboarding", createOnboardingRouter(requireAuth, onboardingController, rateLimits));
   router.use("/transfers", createTransferRouter(requireAuth, transferController, rateLimits));
+  router.use(createLoyaltyRouter(requireAuth, loyaltyService, rateLimits.loyalty));
+  router.use("/recipients", createRecipientRouter(requireAuth, rateLimits.recipientSearch, recipientService));
 
   return router;
 };

@@ -11,6 +11,7 @@ const setup = () => {
     start: jest.fn<OnboardingService["start"]>(),
     requestConsent: jest.fn<OnboardingService["requestConsent"]>(),
     getStatus: jest.fn<OnboardingService["getStatus"]>(),
+    cancel: jest.fn<OnboardingService["cancel"]>().mockResolvedValue(undefined),
     handleCallback: jest.fn<OnboardingService["handleCallback"]>().mockResolvedValue({
       sessionId: "onb_example", status: "COMPLETED", returnUrl: null,
     }),
@@ -18,7 +19,8 @@ const setup = () => {
   const requireAuth = jest.fn<RequestHandler>().mockImplementation((_req, res) => { res.sendStatus(401); });
   const app = express();
   app.use(express.json());
-  app.use("/api/v1/onboarding", createOnboardingRouter(requireAuth, new OnboardingController(service)));
+  const callbackLimit: RequestHandler = (_req, _res, next) => next();
+  app.use("/api/v1/onboarding", createOnboardingRouter(requireAuth, new OnboardingController(service), { callback: callbackLimit } as any));
   app.use(((error, _req, res, _next) => {
     res.status(error.statusCode ?? 500).json({ error: error.message });
   }) as ErrorRequestHandler);
@@ -56,6 +58,9 @@ describe("Onboarding callback HTTP contract", () => {
     t.service.handleCallback.mockResolvedValue({ sessionId: "onb_example", status: "FINALIZING", returnUrl: null });
     const response = await request(t.app).get(callback).query(query).expect(202);
     expect(response.headers["retry-after"]).toBe("2");
+    expect(response.headers.refresh).toBe("2");
+    expect(response.text).toContain("refresh automatically");
+    expect(response.text).not.toContain("proof");
   });
 
   it.each([400, 404, 409, 410, 502])("does not redirect or reflect details when a callback fails with %i", async (statusCode) => {
@@ -65,6 +70,7 @@ describe("Onboarding callback HTTP contract", () => {
     expect(response.text).toContain("Unable to complete authorization");
     expect(response.text).not.toContain("secret-provider-details");
     expect(response.headers.location).toBeUndefined();
+    expect(response.headers.refresh).toBeUndefined();
   });
 
   it("rejects a missing hash before calling the service", async () => {
@@ -78,9 +84,11 @@ describe("Onboarding callback HTTP contract", () => {
     await request(t.app).post("/api/v1/onboarding/start").send({}).expect(401);
     await request(t.app).post("/api/v1/onboarding/onb_example/consent").expect(401);
     await request(t.app).get("/api/v1/onboarding/onb_example/status").expect(401);
+    await request(t.app).delete("/api/v1/onboarding/onb_example").expect(401);
     expect(t.service.start).not.toHaveBeenCalled();
     expect(t.service.requestConsent).not.toHaveBeenCalled();
     expect(t.service.getStatus).not.toHaveBeenCalled();
+    expect(t.service.cancel).not.toHaveBeenCalled();
   });
 
   it("defaults to API mode and rejects arbitrary return URLs in start requests", async () => {
@@ -98,5 +106,17 @@ describe("Onboarding callback HTTP contract", () => {
     await request(t.app).post("/api/v1/onboarding/start")
       .send({ walletAddressUrl: "https://wallet.example/alice", returnUrl: "https://attacker.example" }).expect(400);
     expect(t.service.start).not.toHaveBeenCalled();
+  });
+
+  it("passes the authenticated owner to mobile start, polling, and cancellation", async () => {
+    const t = setup();
+    t.requireAuth.mockImplementation((req, _res, next) => { req.user = { id: "owner", email: "owner@example.com" }; next(); });
+    t.service.start.mockResolvedValue({ sessionId: "onb_example", status: "WALLET_RESOLVED", clientId: "mobile", expiresAt: new Date() });
+    await request(t.app).post("/api/v1/onboarding/start").send({ walletAddressUrl: "https://wallet.example/alice", clientId: "mobile" }).expect(201);
+    expect(t.service.start).toHaveBeenCalledWith(expect.objectContaining({ userId: "owner", clientId: "mobile" }));
+    await request(t.app).get("/api/v1/onboarding/onb_example/status").expect(200);
+    expect(t.service.getStatus).toHaveBeenCalledWith("onb_example", "owner");
+    await request(t.app).delete("/api/v1/onboarding/onb_example").expect(204);
+    expect(t.service.cancel).toHaveBeenCalledWith("onb_example", "owner");
   });
 });

@@ -15,6 +15,8 @@ export const createTransferRouter = (requireAuth: RequestHandler, controller: Tr
   router.get("/callback", limits.callback, controller.handleCallback);
   router.use(requireAuth);
   router.post("/", limits.create, controller.create);
+  router.post("/cancel", limits.status, controller.cancelByKey);
+  router.post("/:id/cancel", limits.status, controller.cancel);
   router.get("/", limits.status, controller.list);
   router.get("/:id", limits.status, controller.get);
   return router;

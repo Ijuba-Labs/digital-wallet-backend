@@ -77,6 +77,7 @@ Create a collection with a `baseUrl` environment variable set to `http://localho
    | GET | `/api/v1/wallet` | List your linked wallets; initially empty |
    | POST | `/api/v1/onboarding/start` | Start linking a test wallet |
    | GET | `/api/v1/transfers` | View your transfer history |
+   | GET | `/api/v1/recipients/search?q=Sipho` | Find a recipient by name or complete email/phone |
 
 To try wallet linking, send `{"walletAddressUrl":"https://your-provider.example/alice","clientId":"api"}` to the onboarding endpoint, using your actual test wallet URL. Save `data.sessionId`, then send `POST /api/v1/onboarding/:sessionId/consent` with your bearer token. Open `data.redirectUrl` in a browser and check `GET /api/v1/onboarding/:sessionId/status` afterward.
 
@@ -116,3 +117,14 @@ The private checkout service is deployed independently and is not a dependency o
 The shared utilities are published as [`@ijuba-labs/payment-primitives`](https://github.com/Ijuba-Labs/digital-wallet-backend/pkgs/npm/payment-primitives). Use `pnpm install:local` while developing: it builds and links the folder using an ignored development lockfile. Production and CI use the pinned registry version in the committed manifest and lockfile. See [package installation and releases](docs/PAYMENT_PACKAGE.md).
 
 For the combined wallet API and merchant checkout development stack, check out `open-rewards-core` as a sibling and run its `./scripts/dev-up.sh`. See `../open-rewards-core/docs/docker-development.md` for isolated Docker services, test users, browser linking and Bruno.
+
+For Android wallet linking, local emulator forwarding, and ngrok setup, see
+[Android development](docs/ANDROID_DEVELOPMENT.md).
+
+# Loyalty card vault
+
+See [docs/LOYALTY_CARDS.md](docs/LOYALTY_CARDS.md) for the API contract and local OCR asset requirements.
+
+## Digital loyalty wallet
+
+See [backend architecture and adding programs](docs/LOYALTY_WALLET.md) and the [Android integration handoff](docs/LOYALTY_MOBILE_HANDOFF.md). Run `pnpm db:migrate` before deploying this API. Real programs remain catalogue-only until verified; customer card storage remains available.

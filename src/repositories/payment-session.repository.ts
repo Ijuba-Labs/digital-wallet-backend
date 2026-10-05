@@ -11,6 +11,7 @@ const providerUrl = text.refine((value) => {
 });
 const sessionSchema = z.object({
   transferId: z.uuid(), clientNonce: text, serverInteractNonce: text,
+  cancelNonce: text.optional(),
   grantRequestUrl: providerUrl,
   expiresAt: z.number().int().positive().safe(),
   continueAfter: z.number().int().nonnegative().safe(),

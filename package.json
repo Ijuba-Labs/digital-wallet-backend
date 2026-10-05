@@ -17,8 +17,11 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:onboarding": "NODE_OPTIONS='--experimental-vm-modules' jest --config jest.onboarding.config.cjs --runInBand && node --test tests/configure-mobile.test.mjs",
+    "test:recipients": "NODE_OPTIONS='--experimental-vm-modules' jest --config jest.recipients.config.cjs --runInBand",
     "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
     "tunnel:start": "tsx local-tunnel-setup.ts",
+    "mobile:configure": "node scripts/configure-mobile.mjs",
     "localenv:compose": "docker compose -f docker/base/docker-compose.yml --env-file ./.env -f docker/dev/docker-compose.yml --env-file ./.env",
     "localenv:dev": "pnpm localenv:compose up --build --watch wallet-api payment-worker",
     "localenv:clean": "pnpm localenv:compose down --volumes --rmi all",
@@ -36,13 +39,18 @@
     "localenv:migrate-to-local": "bash scripts/migrate-to-local.sh",
     "source:archive": "node scripts/source-archive.mjs",
     "secrets:scan": "node scripts/scan-secrets.mjs",
-    "test:payments": "pnpm build && node --import ./tests/env.setup.ts --test tests/payment-regression.test.mjs"
+    "test:payments": "pnpm build && node --import ./tests/env.setup.ts --test tests/payment-regression.test.mjs tests/payment-status-regression.test.mjs tests/payment-cancellation-regression.test.mjs",
+    "test:loyalty:unit": "NODE_OPTIONS='--experimental-vm-modules' jest --config jest.loyalty-unit.config.cjs --runInBand",
+    "test:loyalty": "pnpm test:loyalty:unit && NODE_OPTIONS='--experimental-vm-modules' jest --config jest.loyalty.config.cjs --runInBand"
   },
   "dependencies": {
     "@apollo/client": "^4.3.0",
+    "@ijuba-labs/payment-primitives": "0.1.0",
     "@interledger/open-payments": "^7.4.0",
     "@ngrok/ngrok": "^1.7.0",
+    "@zxing/library": "^0.23.0",
     "bcrypt": "^6.0.0",
+    "busboy": "^1.6.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -56,9 +64,10 @@
     "pg": "^8.23.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
+    "sharp": "^0.35.5",
+    "tesseract.js": "^7.0.0",
     "yaml": "^2.9.1",
-    "zod": "^4.5.4",
-    "@ijuba-labs/payment-primitives": "0.1.0"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@faker-js/faker": "^10.6.0",
@@ -67,6 +76,7 @@
     "@swc/jest": "^0.2.39",
     "@testcontainers/postgresql": "^12.1.0",
     "@types/bcrypt": "^6.0.0",
+    "@types/busboy": "^1.5.4",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/helmet": "^4.0.0",

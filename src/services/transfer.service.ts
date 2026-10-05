@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   isFinalizedGrantWithAccessToken, isPendingGrant, OpenPaymentsClientError,
   type AccessToken, type OutgoingPayment, type WalletAddress
@@ -15,7 +15,7 @@ import { PaymentTokenService } from "./payment-token.service";
 import { logger } from "@/utils/logger";
 
 const SESSION_TTL = 15 * 60 * 1000;
-const terminal = (t: TransferRecord) => ["COMPLETED", "FAILED", "EXPIRED"].includes(t.status);
+const terminal = (t: TransferRecord) => ["COMPLETED", "FAILED", "EXPIRED", "CANCELLED"].includes(t.status);
 const sameAsset = (a: PaymentAmount, b: PaymentAmount) => a.assetCode === b.assetCode && a.assetScale === b.assetScale;
 const sameAmount = (a: PaymentAmount, b: PaymentAmount) => sameAsset(a, b) && BigInt(a.value) === BigInt(b.value);
 type Token = AccessToken["access_token"];
@@ -64,6 +64,7 @@ export class TransferService {
     const claimed = await this.repo.claim(reserved.transfer.id, owner);
     if (!claimed) return this.replay(await this.load(reserved.transfer.id), hash, userId);
     const prepared = await this.leased(claimed, owner, async (initial) => {
+      if (initial.status !== "CREATING") return this.publicRecord(initial);
       let t = initial;
       try {
         const grant = await client.grant.request({ url: recipientWallet.authServer }, {
@@ -112,10 +113,12 @@ export class TransferService {
         });
         await this.tokens.cleanup(t.id, owner, "quote");
         const clientNonce = createInteractionNonce();
+        const cancelNonce = createInteractionNonce();
         // The SDK normalizes the request URL before sending it; this is the exact GNAP hash input.
         const outgoingGrantUrl = new URL(senderWallet.authServer).href;
         const callback = new URL("/api/v1/transfers/callback", this.deps.apiPublicUrl);
         callback.searchParams.set("transfer_id", t.id);
+        callback.searchParams.set("cancel_token", cancelNonce);
         await this.alive(t.id, owner);
         const pendingGrant = await client.grant.request({ url: outgoingGrantUrl }, {
           access_token: {
@@ -130,13 +133,15 @@ export class TransferService {
         validateProviderUrl(pendingGrant.continue.uri);
         validateProviderUrl(pendingGrant.interact.redirect);
         await this.deps.paymentSessionRepository.save({
-          transferId: t.id, pendingGrant, clientNonce,
+          transferId: t.id, pendingGrant, clientNonce, cancelNonce,
           serverInteractNonce: pendingGrant.interact.finish, grantRequestUrl: outgoingGrantUrl,
           continueAfter: Date.now() + (pendingGrant.continue.wait ?? 0) * 1000, expiresAt
         });
         t = await this.update(t, owner, { status: "AWAITING_AUTHORIZATION", next_attempt_at: new Date(Math.min(t.expires_at.getTime(), Date.now() + 60000)) });
         return { ...this.publicRecord(t), authorizationUrl: pendingGrant.interact.redirect };
       } catch (error) {
+        const current = await this.load(t.id);
+        if (current.status === "CANCELLED") return this.publicRecord(current);
         await this.repo.transition(t.id, owner, ["CREATING"], {
           status: error instanceof AppError && error.statusCode === 410 ? "EXPIRED" : "FAILED",
           error_code: "PREPARATION_FAILED", next_attempt_at: new Date()
@@ -188,7 +193,15 @@ export class TransferService {
         }
         await this.tokens.store(id, owner, "outgoing", grant.access_token, (token) => this.checkOutgoing(t, token, true));
         t = await this.update(t, owner, { status: "AUTHORIZED", next_attempt_at: new Date() });
-      } catch {
+      } catch (error) {
+        const current = await this.load(id);
+        if (current.status === "CANCELLED") return { transferId: id, status: current.status };
+        if (error instanceof OpenPaymentsClientError && error.status === 401 && error.code === "request_denied") {
+          t = await this.update(t, owner, { status: "CANCELLED", error_code: "AUTHORIZATION_DECLINED",
+            completed_at: new Date(), reconciliation_required: false, next_attempt_at: new Date() });
+          await this.cleanup(t, owner);
+          return { transferId: id, status: "CANCELLED" as const };
+        }
         await this.repo.transition(id, owner, ["FINALIZING"], { status: "FAILED", error_code: "AUTHORIZATION_FAILED", next_attempt_at: new Date() });
         await this.deleteSession(id);
         throw new AppError("Could not complete payment authorization; check transfer status", 502);
@@ -198,25 +211,80 @@ export class TransferService {
       return { transferId: id, status: t.status };
     });
   }
+  async handleDecline(id: string, cancelToken: string) {
+    const t = await this.load(id);
+    const session = await this.deps.paymentSessionRepository.findById(id);
+    const expected = Buffer.from(session?.cancelNonce ?? "");
+    const provided = Buffer.from(cancelToken);
+    if (!expected.length || expected.length !== provided.length || !timingSafeEqual(expected, provided)) {
+      throw new AppError("Invalid or expired decline callback", 400);
+    }
+    const cancelled = await this.repo.cancel(id, t.sender_user_id, "AUTHORIZATION_DECLINED");
+    if (!cancelled && (await this.load(id)).status !== "CANCELLED") {
+      throw new AppError("Transfer approval is already confirmed or the transfer has ended", 409);
+    }
+    return { transferId: id, status: "CANCELLED" as const };
+  }
 
   async get(userId: string, id: string) {
-    let t = await this.load(id);
+    const t = await this.load(id);
     if (t.sender_user_id !== userId && t.recipient_user_id !== userId) throw new AppError("Transfer not found", 404);
+    const result = await this.refreshStatus(t);
+    return { ...await this.present(result.transfer, userId), statusRefreshAvailable: result.available };
+  }
+  async cancel(userId: string, id: string) {
+    let t = await this.load(id);
+    if (t.sender_user_id !== userId) throw new AppError("Transfer not found", 404);
+    if (t.status === "CANCELLED") return this.publicRecord(t);
+    const cancelled = await this.repo.cancel(id, userId);
+    if (!cancelled) {
+      t = await this.load(id);
+      if (t.status === "CANCELLED") return this.publicRecord(t);
+      throw new AppError("Transfer approval is already confirmed or the transfer has ended", 409);
+    }
+    // Success is durable before provider cleanup. The worker revokes pending
+    // grants and temporary credentials once any in-flight operation releases.
+    return this.publicRecord(cancelled);
+  }
+  async cancelByKey(userId: string, key: string) {
+    const t = await this.repo.findByIdempotencyKey(userId, key);
+    if (!t) throw new AppError("Transfer has not been reserved yet; retry cancellation with the same Idempotency-Key", 409, { retryAfter: 1 });
+    return this.cancel(userId, t.id);
+  }
+  private async refreshStatus(t: TransferRecord) {
     let available = !t.reconciliation_required;
     // Coalesce frequent polling. AUTHORIZED is submitted only by callback/worker.
     if (!t.last_provider_checked_at || Date.now() - t.last_provider_checked_at.getTime() >= 5000) {
       const owner = randomUUID();
-      const claimed = await this.repo.claim(id, owner);
+      const claimed = await this.repo.claim(t.id, owner);
       if (claimed) {
         const result = await this.leased(claimed, owner, (row) => this.maintain(row, owner, false));
         t = result.transfer; available = result.available;
       }
     }
-    return { ...await this.present(t, userId), statusRefreshAvailable: available };
+    return { transfer: t, available };
   }
   async list(userId: string, limit: number, offset: number) {
     const rows = await this.repo.list(userId, limit + 1, offset);
-    return { transfers: rows.slice(0, limit).map((t) => this.publicRecord(t)), pagination: { limit, offset, hasMore: rows.length > limit } };
+    const page = rows.slice(0, limit);
+    const transfers = page.map((t) => ({ ...this.publicRecord(t), statusRefreshAvailable: !t.reconciliation_required }));
+    // Bound provider work for history; other rows are reconciled by the worker
+    // or the individual status endpoint. Never submit a payment from history.
+    const pending = page.map((t, index) => ({ t, index })).filter(({ t }) =>
+      ["PENDING", "UNKNOWN"].includes(t.status) &&
+      (!t.last_provider_checked_at || Date.now() - t.last_provider_checked_at.getTime() >= 5000)).slice(0, 10);
+    for (let start = 0; start < pending.length; start += 4) {
+      await Promise.all(pending.slice(start, start + 4).map(async ({ t, index }) => {
+        try {
+          const result = await this.refreshStatus(t);
+          transfers[index] = { ...this.publicRecord(result.transfer), statusRefreshAvailable: result.available };
+        } catch {
+          // One unavailable provider must not hide the rest of the history.
+          transfers[index]!.statusRefreshAvailable = false;
+        }
+      }));
+    }
+    return { transfers, pagination: { limit, offset, hasMore: rows.length > limit } };
   }
   async processNext(): Promise<boolean> {
     const owner = randomUUID();
@@ -313,6 +381,23 @@ export class TransferService {
   }
   private async refresh(t: TransferRecord, owner: string): Promise<TransferRecord> {
     const client = await this.deps.getOpenPaymentsClient();
+    // Confirm receipt first: expired sender authority cannot prevent confirming
+    // funds already delivered. This operation never requests spending authority.
+    const incomingToken = await this.incomingToken(t, owner);
+    await this.alive(t.id, owner);
+    const incoming = await this.readResource(t, owner, "incoming", () => client.incomingPayment.get({ url: t.incoming_payment_url!, accessToken: incomingToken }));
+    if (incoming.id !== t.incoming_payment_url || incoming.walletAddress !== t.recipient_wallet.id || !t.receive_amount ||
+      !sameAsset(incoming.receivedAmount, t.receive_amount)) throw new AppError("Incoming payment mismatch", 502);
+    const completed = BigInt(incoming.receivedAmount.value) >= BigInt(t.receive_amount.value);
+    t = await this.update(t, owner, {
+      received_amount: incoming.receivedAmount,
+      incoming_completed_at: incoming.completed ? (t.incoming_completed_at ?? new Date()) : t.incoming_completed_at,
+      last_provider_checked_at: new Date(),
+    });
+    if (completed) return this.update(t, owner, {
+      status: "COMPLETED", completed_at: new Date(), reconciliation_required: false,
+      error_code: t.provider_failed ? "PROVIDER_FAILURE_WITH_FULL_RECEIPT" : null,
+    });
     // A persisted provider failure needs only the recipient receipt. A later
     // outgoing read/credential failure must not block that final reconciliation.
     if (!t.provider_failed) {
@@ -335,19 +420,10 @@ export class TransferService {
         t = await this.recordOutgoing(t, owner, match);
       }
     }
-    const incomingToken = await this.tokens.get(t.id, owner, "incoming", (value) => this.checkIncoming(t, value));
-    await this.alive(t.id, owner);
-    const incoming = await this.readResource(t, owner, "incoming", () => client.incomingPayment.get({ url: t.incoming_payment_url!, accessToken: incomingToken }));
-    if (incoming.id !== t.incoming_payment_url || incoming.walletAddress !== t.recipient_wallet.id || !t.receive_amount ||
-      !sameAsset(incoming.receivedAmount, t.receive_amount)) throw new AppError("Incoming payment mismatch", 502);
-    const completed = BigInt(incoming.receivedAmount.value) >= BigInt(t.receive_amount.value);
-    const finalized = t.provider_failed || completed;
     return this.update(t, owner, {
-      received_amount: incoming.receivedAmount,
-      incoming_completed_at: incoming.completed ? (t.incoming_completed_at ?? new Date()) : t.incoming_completed_at,
-      status: completed ? "COMPLETED" : t.provider_failed ? "FAILED" : "PENDING",
-      completed_at: finalized ? new Date() : null, last_provider_checked_at: new Date(), reconciliation_required: false,
-      error_code: t.provider_failed ? (completed ? "PROVIDER_FAILURE_WITH_FULL_RECEIPT" : "PAYMENT_FAILED") : null
+      status: t.provider_failed ? "FAILED" : "PENDING",
+      completed_at: t.provider_failed ? new Date() : null, last_provider_checked_at: new Date(), reconciliation_required: false,
+      error_code: t.provider_failed ? "PAYMENT_FAILED" : null
     });
   }
   private async readResource<T>(t: TransferRecord, owner: string, purpose: "incoming" | "outgoing", read: () => Promise<T>): Promise<T> {
@@ -383,16 +459,15 @@ export class TransferService {
     return resolved;
   }
   private async cleanup(t: TransferRecord, owner: string) {
-    await this.deleteSession(t.id);
+    const grantResolved = await this.cleanupPendingGrant(t);
     if (t.cleanup_state === "DONE") return this.update(t, owner, { next_attempt_at: null });
     let incomingResolved = !t.incoming_payment_url || !!t.incoming_completed_at ||
       !!(t.incoming_expires_at && t.incoming_expires_at.getTime() <= Date.now());
     if (!incomingResolved) {
       try {
         // Preparation may have stopped after creating the incoming resource.
-        if (!await this.repo.credential(t.id, "incoming")) await this.acquireIncoming(t, owner);
         const client = await this.deps.getOpenPaymentsClient();
-        const token = await this.tokens.get(t.id, owner, "incoming", (value) => this.checkIncoming(t, value));
+        const token = await this.incomingToken(t, owner);
         await this.alive(t.id, owner);
         await this.tokens.assertUsable(t.id, "incoming");
         const incoming = await client.incomingPayment.complete({ url: t.incoming_payment_url!, accessToken: token });
@@ -403,7 +478,7 @@ export class TransferService {
         incomingResolved = true;
       } catch { /* Preserve the credential until completion is confirmed or incoming expires. */ }
     }
-    let resolved = await this.cleanupTemporary(t, owner);
+    let resolved = await this.cleanupTemporary(t, owner) && grantResolved;
     for (const purpose of ["incoming", "outgoing"] as const) {
       if (purpose === "incoming" && !incomingResolved) { resolved = false; continue; }
       await this.alive(t.id, owner);
@@ -415,6 +490,23 @@ export class TransferService {
       cleanup_state: resolved ? "DONE" : "PENDING", cleanup_error: resolved ? null : "PROVIDER_CLEANUP_INCOMPLETE",
       next_attempt_at: resolved ? null : new Date(Date.now() + 60000)
     });
+  }
+  private async cleanupPendingGrant(t: TransferRecord): Promise<boolean> {
+    try {
+      const session = await this.deps.paymentSessionRepository.findById(t.id);
+      if (session) {
+        const client = await this.deps.getOpenPaymentsClient();
+        try {
+          await client.grant.cancel({ url: session.pendingGrant.continue.uri,
+            accessToken: session.pendingGrant.continue.access_token.value });
+        } catch (error) {
+          if (!(error instanceof OpenPaymentsClientError && [401, 404].includes(error.status ?? 0) &&
+            ["invalid_continuation", "request_denied"].includes(error.code ?? ""))) return false;
+        }
+      }
+      await this.deps.paymentSessionRepository.delete(t.id);
+      return true;
+    } catch { return false; }
   }
   private exactScope(token: Token, type: string, actions: string[], identifier?: string) {
     const access = token.access;
@@ -430,7 +522,23 @@ export class TransferService {
   }
   private checkIncoming(t: TransferRecord, token: Token) {
     if (!t.incoming_payment_url) throw new AppError("Incoming payment is unavailable", 503);
-    this.exactScope(token, "incoming-payment", ["read", "complete"], t.incoming_payment_url);
+    this.exactScope(token, "incoming-payment", ["read", "complete"], t.recipient_wallet.id);
+  }
+  private async incomingToken(t: TransferRecord, owner: string) {
+    const credential = await this.repo.credential(t.id, "incoming");
+    let usableScope = false;
+    if (credential) {
+      try { this.checkIncoming(t, { value: "", manage: credential.manage_url, access: credential.access }); usableScope = true; }
+      catch { /* Replace the legacy resource-identified grant after cleanup. */ }
+    }
+    if (!credential || !usableScope || credential.state !== "READY" ||
+      (credential.expires_at && credential.expires_at.getTime() <= Date.now())) {
+      if (credential && !await this.tokens.cleanup(t.id, owner, "incoming")) {
+        throw new AppError("Incoming reconciliation credential needs cleanup", 503);
+      }
+      await this.acquireIncoming(t, owner);
+    }
+    return this.tokens.get(t.id, owner, "incoming", (value) => this.checkIncoming(t, value));
   }
   private checkQuote(token: Token) { this.exactScope(token, "quote", ["create"]); }
   private async acquireIncoming(t: TransferRecord, owner: string) {
@@ -438,9 +546,9 @@ export class TransferService {
     const client = await this.deps.getOpenPaymentsClient();
     await this.alive(t.id, owner);
     const grant = await client.grant.request({ url: t.recipient_wallet.authServer }, {
-      access_token: { access: [{ type: "incoming-payment", identifier: t.incoming_payment_url, actions: ["read", "complete"] }] }
+      access_token: { access: [{ type: "incoming-payment", identifier: t.recipient_wallet.id, actions: ["read", "complete"] }] }
     });
-    if (!isFinalizedGrantWithAccessToken(grant)) throw new AppError("Provider does not support resource-bound incoming authority", 422);
+    if (!isFinalizedGrantWithAccessToken(grant)) throw new AppError("Provider requires unsupported incoming consent", 422);
     await this.tokens.store(t.id, owner, "incoming", grant.access_token, (token) => this.checkIncoming(t, token));
   }
   private checkOutgoing(t: TransferRecord, token: Token, create = false) {

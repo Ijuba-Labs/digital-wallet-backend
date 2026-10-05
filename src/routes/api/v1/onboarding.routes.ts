@@ -21,6 +21,7 @@ export const createOnboardingRouter = (requireAuth: RequestHandler, onboardingCo
   router.post("/start", onboardingController.startOnboarding);
   router.post("/:sessionId/consent", onboardingController.requestConsent);
   router.get("/:sessionId/status", onboardingController.getStatus);
+  router.delete("/:sessionId", onboardingController.cancel);
   router.get("/success", onboardingController.getStatus);
 
   return router;
