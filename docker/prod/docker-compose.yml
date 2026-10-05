@@ -7,6 +7,9 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      CLIENT_WALLET_ADDRESS_TEST_NET: ${CLIENT_WALLET_ADDRESS_TEST_NET:?Set the wallet for your saved signing key}
+      KEY_ID_TEST_NET: ${KEY_ID_TEST_NET:?Set the matching registered key ID}
+      KEY_ID: ${KEY_ID_TEST_NET:?Set the matching registered key ID}
       ENCRYPTION_KEYRING_FILE: /run/secrets/payment_keyring
       PRIVATE_KEY_PATH_TEST_NET: /run/secrets/open_payments_private_key
     secrets: [payment_keyring, open_payments_private_key]
@@ -19,6 +22,9 @@ services:
     stop_grace_period: 60s
     environment:
       NODE_ENV: production
+      CLIENT_WALLET_ADDRESS_TEST_NET: ${CLIENT_WALLET_ADDRESS_TEST_NET:?Set the wallet for your saved signing key}
+      KEY_ID_TEST_NET: ${KEY_ID_TEST_NET:?Set the matching registered key ID}
+      KEY_ID: ${KEY_ID_TEST_NET:?Set the matching registered key ID}
       ENCRYPTION_KEYRING_FILE: /run/secrets/payment_keyring
       PRIVATE_KEY_PATH_TEST_NET: /run/secrets/open_payments_private_key
     secrets: [payment_keyring, open_payments_private_key]

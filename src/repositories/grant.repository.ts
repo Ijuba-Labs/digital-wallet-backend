@@ -6,9 +6,12 @@ import { AppError } from "@/utils/appError";
 export class GrantRepository {
   constructor(private readonly deps: GrantRepositoryDependencies) {}
   async listLinkedWallets(userId: string): Promise<LinkedWallet[]> {
-    return this.deps.db("wallets").where({ user_id: userId }).whereNotNull("verified_at")
+    return this.deps.db("wallets").where({ user_id: userId }).andWhere(function () {
+      this.whereNotNull("verified_at");
+      if (process.env.NODE_ENV === "development" && process.env.DEV_SETUP === "1") this.orWhere("development_fixture", true);
+    })
       .select("id", "wallet_address_url as walletAddressUrl", "public_name as publicName", "asset_code as assetCode",
-        "asset_scale as assetScale", "status", "is_default as isDefault", "verified_at as verifiedAt", "created_at as createdAt", "updated_at as updatedAt")
+        "asset_scale as assetScale", "development_fixture as developmentFixture", "status", "is_default as isDefault", "verified_at as verifiedAt", "created_at as createdAt", "updated_at as updatedAt")
       .orderBy("is_default", "desc").orderBy("created_at", "desc").orderBy("id", "asc");
   }
   async getFinalized(transactionId: string): Promise<FinalizedOwnership | undefined> {
@@ -29,10 +32,10 @@ export class GrantRepository {
         }
         const [wallet] = await trx("wallets").insert({ user_id: input.userId, wallet_address_url: walletAddress,
           asset_code: input.wallet.assetCode, asset_scale: input.wallet.assetScale, auth_server: input.wallet.authServer,
-          resource_server: input.wallet.resourceServer, public_name: input.wallet.publicName ?? null, verified_at: trx.fn.now() })
+          resource_server: input.wallet.resourceServer, public_name: input.wallet.publicName ?? null, verified_at: trx.fn.now(), development_fixture: false })
           .onConflict(["user_id", "wallet_address_url"]).merge({ asset_code: input.wallet.assetCode, asset_scale: input.wallet.assetScale,
             auth_server: input.wallet.authServer, resource_server: input.wallet.resourceServer, public_name: input.wallet.publicName ?? null,
-            verified_at: trx.fn.now(), updated_at: trx.fn.now(), status: "LINKED" }).returning<{ id: string }[]>("id");
+            verified_at: trx.fn.now(), development_fixture: false, updated_at: trx.fn.now(), status: "LINKED" }).returning<{ id: string }[]>("id");
         await trx("wallet_ownership_attestations").insert({ wallet_id: wallet.id, transaction_id: input.transactionId,
           verified_subject_uri: walletAddress, verified_at: trx.fn.now(), callback_fingerprint: input.callbackFingerprint,
           client_id: input.clientId, return_url: input.returnUrl });

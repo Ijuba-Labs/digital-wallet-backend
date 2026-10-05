@@ -3,6 +3,7 @@
 [![Backend CI](https://github.com/Ijuba-Labs/digital-wallet-backend/actions/workflows/backend.yml/badge.svg)](https://github.com/Ijuba-Labs/digital-wallet-backend/actions/workflows/backend.yml)
 [![Coverage Status](https://coveralls.io/repos/github/n-sipho/digital-wallet-backend/badge.svg?branch=main)](https://coveralls.io/github/n-sipho/digital-wallet-backend?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Source secret scan](https://github.com/Ijuba-Labs/digital-wallet-backend/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/Ijuba-Labs/digital-wallet-backend/actions/workflows/secret-scan.yml)
 
 An open source backend for digital wallets, built with TypeScript and Express. It provides account registration and login, wallet linking, and peer-to-peer transfers through Open Payments.
 
@@ -113,3 +114,5 @@ For project credits, you can use: “Uses Digital Wallet Backend by [n-sipho](ht
 The private checkout service is deployed independently and is not a dependency of this public backend. Shared MIT-licensed payment utilities live in `packages/open-payments-primitives`. `GET /api/v1/identity` returns the authenticated customer ID; `GET /internal/users/:id/wallets` requires a separate `CHECKOUT_IDENTITY_SERVICE_KEY` of at least 32 characters and exposes only verified linked wallets for an active customer. Configure that key in both services without sharing JWT secrets or database credentials. Public installs and CI require no private-repository token.
 
 The shared utilities are published as [`@ijuba-labs/payment-primitives`](https://github.com/Ijuba-Labs/digital-wallet-backend/pkgs/npm/payment-primitives). Use `pnpm install:local` while developing: it builds and links the folder using an ignored development lockfile. Production and CI use the pinned registry version in the committed manifest and lockfile. See [package installation and releases](docs/PAYMENT_PACKAGE.md).
+
+For the combined wallet API and merchant checkout development stack, check out `open-rewards-core` as a sibling and run its `./scripts/dev-up.sh`. See `../open-rewards-core/docs/docker-development.md` for isolated Docker services, test users, browser linking and Bruno.

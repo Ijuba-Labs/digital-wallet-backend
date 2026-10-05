@@ -6,7 +6,8 @@ export interface LinkedWallet {
   assetScale: number;
   status: "LINKED" | "UNLINKED";
   isDefault: boolean;
-  verifiedAt: Date;
+  verifiedAt: Date | null;
+  developmentFixture?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

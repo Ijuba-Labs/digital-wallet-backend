@@ -106,7 +106,7 @@ export const createApp = ({ db, redis }: AppDependencies): Application => {
       if (!key || key.length < 32 || !supplied || !timingSafeEqual(createHash("sha256").update(supplied).digest(), createHash("sha256").update(`Bearer ${key}`).digest())) throw new AppError("Service authentication required", 401);
       const user = await userRepository.findById(String(req.params.id));
       if (!user?.id || user.status !== "ACTIVE") throw new AppError("Customer is not eligible", 403);
-      res.json({ customerId: user.id, wallets: (await grantRepository.listLinkedWallets(user.id)).filter(w => w.status === "LINKED") });
+      res.json({ customerId: user.id, wallets: (await grantRepository.listLinkedWallets(user.id)).filter(w => w.status === "LINKED" && w.verifiedAt) });
     } catch (error) { next(error); }
   });
   // Routes

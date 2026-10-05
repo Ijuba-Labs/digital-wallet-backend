@@ -33,6 +33,7 @@ CREATE TABLE wallets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     public_name TEXT,
     verified_at TIMESTAMPTZ,
+    development_fixture BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT uq_user_wallet UNIQUE(user_id, wallet_address_url)
 );

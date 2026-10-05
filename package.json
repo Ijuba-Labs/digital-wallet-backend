@@ -33,6 +33,7 @@
     "worker:dev": "tsx watch src/worker.ts",
     "keys:reencrypt": "node dist/rekey.js",
     "localenv:reset": "node scripts/reset-development.mjs",
+    "localenv:migrate-to-local": "bash scripts/migrate-to-local.sh",
     "source:archive": "node scripts/source-archive.mjs",
     "secrets:scan": "node scripts/scan-secrets.mjs",
     "test:payments": "pnpm build && node --import ./tests/env.setup.ts --test tests/payment-regression.test.mjs"

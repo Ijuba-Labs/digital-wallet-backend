@@ -453,3 +453,7 @@ user's lifetime and are not reused for a different operation.
 
 For backward compatibility the header is optional. Calls without it retain the
 existing active-session matching behavior and do not have durable retry identity.
+
+## Saved signing keys in development and production
+
+Use the private key downloaded from the wallet provider. No service generates or uploads an Open Payments signing key. The sibling `open-rewards-core/scripts/saved-key.sh` validates a saved Ed25519 PEM against its wallet registry and writes `.local/signing/signing.env` with the discovered key ID and absolute file paths. The production Compose overlay uses these public configuration values and mounts the saved private file as `open_payments_private_key` for both API and worker. Follow [saved signing keys](../../open-rewards-core/docs/saved-signing-keys.md) for commands and production configuration.
