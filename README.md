@@ -116,3 +116,7 @@ The private checkout service is deployed independently and is not a dependency o
 The shared utilities are published as [`@ijuba-labs/payment-primitives`](https://github.com/Ijuba-Labs/digital-wallet-backend/pkgs/npm/payment-primitives). Use `pnpm install:local` while developing: it builds and links the folder using an ignored development lockfile. Production and CI use the pinned registry version in the committed manifest and lockfile. See [package installation and releases](docs/PAYMENT_PACKAGE.md).
 
 For the combined wallet API and merchant checkout development stack, check out `open-rewards-core` as a sibling and run its `./scripts/dev-up.sh`. See `../open-rewards-core/docs/docker-development.md` for isolated Docker services, test users, browser linking and Bruno.
+
+# Loyalty card vault
+
+See [docs/LOYALTY_CARDS.md](docs/LOYALTY_CARDS.md) for the API contract and local OCR asset requirements.

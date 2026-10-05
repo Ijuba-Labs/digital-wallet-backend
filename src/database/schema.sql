@@ -18,6 +18,51 @@ CREATE TABLE users (
 
 CREATE INDEX idx_users_email ON users(email);
 
+-- User-entered loyalty cards are not retailer-authorized ownership records.
+CREATE TABLE loyalty_programs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    requires_custom_name BOOLEAN NOT NULL DEFAULT false
+);
+INSERT INTO loyalty_programs (id, name, requires_custom_name) VALUES
+    ('xtra-savings', 'Xtra Savings', false),
+    ('clicks-clubcard', 'Clicks ClubCard', false),
+    ('smart-shopper', 'Smart Shopper', false),
+    ('other', 'Other', true);
+
+CREATE TABLE loyalty_cards (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    program_id TEXT NOT NULL REFERENCES loyalty_programs(id),
+    custom_program_name TEXT,
+    nickname TEXT,
+    membership_number_enc TEXT,
+    membership_number_mask TEXT,
+    barcode_payload_enc TEXT,
+    barcode_payload_mask TEXT,
+    barcode_format TEXT,
+    image_enc TEXT,
+    image_mime TEXT,
+    image_detection TEXT,
+    image_detection_value_enc TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (membership_number_enc IS NOT NULL OR barcode_payload_enc IS NOT NULL OR image_enc IS NOT NULL),
+    CHECK ((barcode_payload_enc IS NULL) = (barcode_format IS NULL)),
+    CHECK ((image_enc IS NULL) = (image_mime IS NULL)),
+    CHECK ((program_id = 'other' AND nullif(trim(custom_program_name), '') IS NOT NULL)
+        OR (program_id <> 'other' AND custom_program_name IS NULL))
+);
+CREATE INDEX idx_loyalty_cards_user ON loyalty_cards(user_id, created_at DESC);
+CREATE TABLE loyalty_card_identifiers (
+    card_id UUID NOT NULL REFERENCES loyalty_cards(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    program_id TEXT NOT NULL REFERENCES loyalty_programs(id),
+    fingerprint CHAR(64) NOT NULL,
+    PRIMARY KEY (card_id, fingerprint),
+    UNIQUE (user_id, program_id, fingerprint)
+);
+
 -- Linked Wallet Addresses
 CREATE TABLE wallets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

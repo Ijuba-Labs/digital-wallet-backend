@@ -43,6 +43,7 @@ import { PaymentSessionRepository } from "./repositories/payment-session.reposit
 import { TransferService } from "./services/transfer.service";
 import { createPaymentRateLimits } from "./middlewares/rateLimiter.middleware";
 import { TransferController } from "./controllers/transfer.controller";
+import { LoyaltyService } from "./services/loyalty.service";
 
 export const createApp = ({ db, redis }: AppDependencies): Application => {
   const app = express();
@@ -115,6 +116,7 @@ export const createApp = ({ db, redis }: AppDependencies): Application => {
     onboardingController,
     walletController,
     transferController,
+    loyaltyService: new LoyaltyService(db),
     rateLimits,
     requireAuth
   }));

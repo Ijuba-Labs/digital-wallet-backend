@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, '..');
 const output = resolve(process.argv[2] ?? join(tmpdir(), 'wallet-backend-source.tar.gz'));
 const excludedDirs = new Set(['.git', '.aws', '.agents', '.codex', 'secrets', 'node_modules', '.pnpm-store',
   'dist', 'build', 'coverage', '.nyc_output', 'logs', '.cache', '.idea', '.vscode']);
-const excludedFile = (name) => /^\.env(?:\.|$)/i.test(name) ||
+const excludedFile = (name, relative) => relative === 'assets/tesseract/eng.traineddata.gz' ? false : /^\.env(?:\.|$)/i.test(name) ||
   /\.(?:env|pem|key|p12|pfx|jks|secret|secrets|log|tsbuildinfo|zip|gz|tgz|tar)$/i.test(name) ||
   /(?:private[-_]?key|keyring|credentials|id_rsa|id_ed25519)/i.test(name) ||
   ['.DS_Store', 'ngrok.yml', 'ngrok.yaml'].includes(name);
@@ -15,7 +15,7 @@ const files = [];
 function collect(directory, prefix = '') {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const relative = prefix + entry.name;
-    if (entry.isSymbolicLink() || excludedDirs.has(entry.name) || excludedFile(entry.name)) continue;
+    if (entry.isSymbolicLink() || excludedDirs.has(entry.name) || excludedFile(entry.name, relative)) continue;
     if (entry.isDirectory()) collect(join(directory, entry.name), relative + '/');
     else if (entry.isFile() && resolve(root, relative) !== output) files.push('./' + relative);
   }
