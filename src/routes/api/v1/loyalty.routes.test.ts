@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
 import request from "supertest";
 import jwt from "jsonwebtoken";
 import sharp from "sharp";
-import { readFileSync } from "node:fs";
+import type Redis from "ioredis";
 import { BarcodeFormat, QRCodeWriter } from "@zxing/library";
 import { createApp } from "@/app";
 import { env } from "@/config/env";
@@ -15,11 +15,12 @@ describe("loyalty card vault", () => {
   const ids = ["47bb6a98-d535-4db6-bf90-c2090466a801", "47bb6a98-d535-4db6-bf90-c2090466a802"];
   const token = (index: number) => `Bearer ${jwt.sign({ id: ids[index], email: `loyalty-${index}@example.test` }, env.JWT_SECRET)}`;
   const url = "/api/v1/loyalty-cards";
-  const xtra = readFileSync("tests/fixtures/xtra-savings.png");
+  let xtra: Buffer;
 
   beforeAll(async () => {
     db = await createTestDatabase();
-    app = createApp({ db });
+    app = createApp({ db, redis: { eval: async () => [1, 60000] } as unknown as Redis });
+    xtra = await qrImage("SYNTHETIC-XTRA-00112233");
     await db("users").insert(ids.map((id, index) => ({ id, email: `loyalty-${index}@example.test` })));
   });
   afterAll(async () => {
@@ -38,6 +39,26 @@ describe("loyalty card vault", () => {
     const programs = await request(app).get("/api/v1/loyalty-programs").expect(200);
     expect(programs.body.data.map((p: any) => p.id)).toEqual(expect.arrayContaining(["xtra-savings", "clicks-clubcard", "smart-shopper", "other"]));
     await request(app).get(url).expect(401);
+  });
+
+  it("exposes versioned neutral templates and validates catalogue-only previews without saving", async () => {
+    const details = await request(app).get("/api/v1/loyalty-programs/clicks-clubcard").expect(200);
+    expect(details.body.data.digitalCardSupported).toBe(false);
+    const template = await request(app).get("/api/v1/loyalty-programs/clicks-clubcard/template").query({ version: "1" }).expect(200);
+    expect(template.body.data.version).toBe(1);
+    await request(app).get("/api/v1/loyalty-programs/clicks-clubcard/template").query({ version: "-1" }).expect(400);
+    const before = await db("loyalty_cards").where({ user_id: ids[0] }).count("* as count").first();
+    const preview = await request(app).post(`${url}/preview`).set("Authorization", token(0))
+      .send({ programId: "clicks-clubcard", membershipNumber: "111122223333" }).expect(200);
+    expect(preview.body.data.canGenerateBarcode).toBe(false);
+    expect(JSON.stringify(preview.body)).not.toContain("111122223333");
+    expect(await db("loyalty_cards").where({ user_id: ids[0] }).count("* as count").first()).toEqual(before);
+    await request(app).post(`${url}/preview`).send({ programId: "clicks-clubcard", membershipNumber: "111122223333" }).expect(401);
+    const created = await request(app).post(url).set("Authorization", token(0))
+      .send({ programId: "clicks-clubcard", membershipNumber: "111122223333" }).expect(201);
+    await request(app).get(`${url}/${created.body.data.id}/checkout`).set("Authorization", token(0)).expect(409);
+    await request(app).get(`${url}/${created.body.data.id}/checkout`).set("Authorization", token(1)).expect(404);
+    await request(app).delete(`${url}/${created.body.data.id}`).set("Authorization", token(0)).expect(204);
   });
 
   it("saves number-only cards, masks lists, encrypts storage, and rejects duplicates", async () => {
@@ -78,7 +99,7 @@ describe("loyalty card vault", () => {
     await request(app).post(url).set("Authorization", token(0)).send({ programId: "smart-shopper", barcodePayload: "without-format" }).expect(400);
   });
 
-  it("accepts an image alone, uses supplied Xtra Savings image, replaces and deletes it", async () => {
+  it("accepts an image alone, uses a synthetic card image, replaces and deletes it", async () => {
     const created = await request(app).post(url).set("Authorization", token(0))
       .field("card", JSON.stringify({ programId: "xtra-savings" }))
       .attach("image", xtra, { filename: "xtra.png", contentType: "image/png" }).expect(201);

@@ -3,20 +3,16 @@ import type { Knex } from "knex";
 import { createCipher } from "@ijuba-labs/payment-primitives";
 import { loadKeyring } from "@/utils/grant-encryption";
 import { AppError } from "@/utils/appError";
+import { LoyaltyCatalogueService } from "./loyalty-catalogue.service";
+import { validateProgramCard, validateBarcodePayload } from "./loyalty-validation";
 import { checkLoyaltyImage, type CheckedLoyaltyImage } from "./loyalty-image.service";
 
-export interface CardInput {
-  programId?: string;
-  customProgramName?: string | null;
-  nickname?: string | null;
-  membershipNumber?: string | null;
-  barcodePayload?: string | null;
-  barcodeFormat?: string | null;
-}
+import type { CardInput, CardSummary, LoyaltyCheckoutBundle } from "@/types/loyalty";
+export type { CardInput } from "@/types/loyalty";
 
 const allowed = new Set(["programId", "customProgramName", "nickname", "membershipNumber", "barcodePayload", "barcodeFormat"]);
 const formatNames = new Set(["CODE_128", "CODE_39", "EAN_13", "EAN_8", "UPC_A", "UPC_E", "ITF", "QR_CODE", "DATA_MATRIX", "PDF_417", "AZTEC", "CODABAR"]);
-const mask = (value: string) => {
+export const maskLoyaltyNumber = (value: string) => {
   const compact = value.replace(/\s/g, "");
   const visible = Math.min(4, Math.max(0, compact.length - 2));
   return `••••${visible ? compact.slice(-visible) : ""}`;
@@ -31,7 +27,7 @@ function parseInput(raw: unknown, partial = false): CardInput {
   for (const [key, value] of Object.entries(input)) {
     if (value !== null && (typeof value !== "string" || value.length > 256)) throw new AppError(`Invalid ${key}`, 400);
   }
-  const card = Object.fromEntries(Object.entries(input).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value])) as CardInput;
+  const card = Object.fromEntries(Object.entries(input).map(([key, value]) => [key, typeof value === "string" && key !== "barcodePayload" ? value.trim() : value])) as CardInput;
   if (!partial && !card.programId) throw new AppError("programId is required", 400);
   return card;
 }
@@ -39,7 +35,8 @@ function parseInput(raw: unknown, partial = false): CardInput {
 export class LoyaltyService {
   private readonly ring = loadKeyring();
   private readonly cipher = createCipher(this.ring, "wallet-backend:loyalty:v1");
-  constructor(private readonly db: Knex) {}
+  private readonly catalogue: LoyaltyCatalogueService;
+  constructor(private readonly db: Knex) { this.catalogue = new LoyaltyCatalogueService(db); }
 
   private encrypt(value: string | null | undefined, id: string, field: string) {
     return value ? this.cipher.encrypt(value, `loyalty-${field}:${id}`) : null;
@@ -56,10 +53,10 @@ export class LoyaltyService {
     }))];
   }
   private async program(programId: string | undefined, customName: string | null | undefined) {
-    const program = programId && await this.db("loyalty_programs").where({ id: programId }).first();
+    const program = programId && await this.catalogue.get(programId);
     if (!program) throw new AppError("Unknown loyalty program", 400);
-    if (program.requires_custom_name && !customName) throw new AppError("customProgramName is required for Other", 400);
-    if (!program.requires_custom_name && customName) throw new AppError("customProgramName is only allowed for Other", 400);
+    if (program.requiresCustomName && !customName) throw new AppError("customProgramName is required for Other", 400);
+    if (!program.requiresCustomName && customName) throw new AppError("customProgramName is only allowed for Other", 400);
     return program;
   }
   private validate(card: CardInput, image: CheckedLoyaltyImage | null) {
@@ -73,14 +70,15 @@ export class LoyaltyService {
     if (card.nickname && card.nickname.length > 80 || card.customProgramName && card.customProgramName.length > 100)
       throw new AppError("Card name is too long", 400);
   }
-  private metadata(row: any) {
+  private metadata(row: any): CardSummary {
     return {
       id: row.id, programId: row.program_id, programName: row.program_name,
       customProgramName: row.custom_program_name, nickname: row.nickname,
       membershipNumberMasked: row.membership_number_mask,
       barcodePayloadMasked: row.barcode_payload_mask,
       barcodeFormat: row.barcode_format, hasImage: !!row.image_enc,
-      imageDetection: row.image_detection, createdAt: row.created_at, updatedAt: row.updated_at,
+      templateVersion: row.template_version,
+      imageDetection: row.image_detection, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
     };
   }
   private query(userId: string) {
@@ -93,8 +91,34 @@ export class LoyaltyService {
     if (!row) throw new AppError("Card not found", 404);
     return row;
   }
-  async programs() {
-    return this.db("loyalty_programs").select("id", "name", "requires_custom_name as requiresCustomName").orderBy("name");
+  async programs(filters: unknown = {}) { return this.catalogue.list(filters); }
+  async programDetails(id: string) { return this.catalogue.get(id); }
+  async template(programId: string, version?: number) { return this.catalogue.template(programId, version); }
+  async preview(raw: unknown) {
+    const card = parseInput(raw);
+    const program = await this.program(card.programId, card.customProgramName);
+    this.validate(card, null);
+    validateProgramCard(program, card);
+    const template = await this.catalogue.template(program.id);
+    return { program, template, membershipNumberMasked: card.membershipNumber ? maskLoyaltyNumber(card.membershipNumber) : null,
+      barcodePayloadMasked: card.barcodePayload ? maskLoyaltyNumber(card.barcodePayload) : null,
+      canGenerateBarcode: program.digitalCardSupported && !!card.barcodePayload,
+      // The client already holds the private values; do not echo them.
+      barcodeFormat: program.digitalCardSupported ? program.barcodeFormat : "UNKNOWN" };
+  }
+  async checkout(userId: string, id: string): Promise<LoyaltyCheckoutBundle> {
+    const row = await this.owned(userId, id);
+    const program = await this.catalogue.get(row.program_id);
+    if (!program.digitalCardSupported) throw new AppError("Digital checkout is unavailable for this program. Use your physical card or the retailer's app", 409);
+    const template = await this.catalogue.template(row.program_id, row.template_version ?? undefined);
+    const barcodePayload = this.decrypt(row.barcode_payload_enc, id, "barcode");
+    if (!barcodePayload || row.barcode_format !== program.barcodeFormat) throw new AppError("Scan your physical card again before using digital checkout", 422);
+    validateBarcodePayload(barcodePayload, program.barcodeFormat);
+    const checkedAt = new Date();
+    return { ...this.metadata(row), program, template, canGenerateBarcode: true,
+      membershipNumber: this.decrypt(row.membership_number_enc, id, "number"), barcodePayload,
+      effectiveTemplateVersion: template.version,
+      checkedAt: checkedAt.toISOString(), offlineValidUntil: new Date(checkedAt.getTime() + 24 * 60 * 60 * 1000).toISOString() };
   }
   async list(userId: string) {
     return (await this.query(userId).orderBy("c.created_at", "desc")).map(row => this.metadata(row));
@@ -102,7 +126,8 @@ export class LoyaltyService {
   async get(userId: string, id: string) { return this.metadata(await this.owned(userId, id)); }
   async presentation(userId: string, id: string) {
     const row = await this.owned(userId, id);
-    return { ...this.metadata(row), membershipNumber: this.decrypt(row.membership_number_enc, id, "number"),
+    const program = await this.catalogue.get(row.program_id);
+    return { ...this.metadata(row), canGenerateBarcode: false, digitalCardSupported: program.digitalCardSupported, membershipNumber: this.decrypt(row.membership_number_enc, id, "number"),
       barcodePayload: this.decrypt(row.barcode_payload_enc, id, "barcode"),
       imageUrl: row.image_enc ? `/api/v1/loyalty-cards/${id}/image` : null };
   }
@@ -112,8 +137,9 @@ export class LoyaltyService {
     return { mime: row.image_mime as string, bytes: Buffer.from(this.decrypt(row.image_enc, id, "image")!, "base64") };
   }
   private async persist(userId: string, id: string, card: CardInput, image: CheckedLoyaltyImage | null, existing?: any) {
-    await this.program(card.programId, card.customProgramName);
+    const program = await this.program(card.programId, card.customProgramName);
     this.validate(card, image);
+    validateProgramCard(program, card);
     const imageBytes = image?.bytes ?? (existing?.image_enc ? Buffer.from(this.decrypt(existing.image_enc, id, "image")!, "base64") : null);
     const detectedValue = image?.detectedValue ?? (existing?.image_detection_value_enc ? this.decrypt(existing.image_detection_value_enc, id, "detected") : null);
     const values = [card.membershipNumber ?? "", card.barcodePayload ?? "", detectedValue ?? ""];
@@ -121,9 +147,10 @@ export class LoyaltyService {
     const fingerprints = this.fingerprints(values, card.programId === "other" ? card.customProgramName : null);
     const row = {
       user_id: userId, program_id: card.programId, custom_program_name: card.customProgramName || null, nickname: card.nickname || null,
-      membership_number_enc: this.encrypt(card.membershipNumber, id, "number"), membership_number_mask: card.membershipNumber ? mask(card.membershipNumber) : null,
-      barcode_payload_enc: this.encrypt(card.barcodePayload, id, "barcode"), barcode_payload_mask: card.barcodePayload ? mask(card.barcodePayload) : null,
+      membership_number_enc: this.encrypt(card.membershipNumber, id, "number"), membership_number_mask: card.membershipNumber ? maskLoyaltyNumber(card.membershipNumber) : null,
+      barcode_payload_enc: this.encrypt(card.barcodePayload, id, "barcode"), barcode_payload_mask: card.barcodePayload ? maskLoyaltyNumber(card.barcodePayload) : null,
       barcode_format: card.barcodeFormat || null,
+      template_version: existing?.program_id === card.programId ? existing.template_version : program.currentTemplateVersion,
       image_enc: imageBytes ? this.encrypt(imageBytes.toString("base64"), id, "image") : null,
       image_mime: imageBytes ? "image/jpeg" : null,
       image_detection: image?.detection ?? existing?.image_detection ?? null,

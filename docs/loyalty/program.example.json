@@ -1,0 +1,23 @@
+{
+  "id": "sample-retailer",
+  "name": "Sample Rewards",
+  "configuration": {
+    "retailerName": "Sample Retailer",
+    "category": "GENERAL_RETAIL",
+    "description": "Replace with reviewed program information before publication.",
+    "barcodeFormat": "UNKNOWN",
+    "capabilities": { "digitalCard": false, "staticBarcode": false, "manualEntry": true, "barcodeScanning": true, "rewardsInformation": true },
+    "verification": { "barcodeFormatVerified": false, "numberFormatVerified": false, "digitalReproductionAllowed": false, "templateVerified": false },
+    "status": "CATALOGUE_ONLY",
+    "active": true
+  },
+  "template": {
+    "version": 1,
+    "layout": {
+      "aspectRatio": 1.585772508336421,
+      "background": { "type": "solid", "colors": ["#F3F0E8"] },
+      "barcode": { "x": 0.07, "y": 0.52, "width": 0.86, "height": 0.33, "backgroundColor": "#FFFFFF", "foregroundColor": "#000000", "showNumber": true },
+      "attribution": "Independent loyalty wallet. No retailer affiliation is implied."
+    }
+  }
+}

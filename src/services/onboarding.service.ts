@@ -174,6 +174,23 @@ export class OnboardingService {
     }
     return this.response(s);
   }
+  async cancel(id: string, userId: string): Promise<void> {
+    const durable = await this.deps.grantRepository.getFinalized(id);
+    if (durable) {
+      if (durable.userId !== userId) throw new AppError("Onboarding not found", 404);
+      throw new AppError("Wallet is already connected", 409);
+    }
+    const session = await this.validSession(id, userId);
+    if (session.status === "FAILED") return;
+    // An in-flight provider request must finish before cancellation can win.
+    if (!["PENDING", "WALLET_RESOLVED", "CONSENT_PENDING"].includes(session.status)) {
+      throw new AppError("Authorization is processing; check onboarding status", 409);
+    }
+    await this.deps.onboardingRepository.transition(id, session.status, {
+      status: "FAILED", failureReason: "Cancelled by user", pendingGrant: undefined,
+      interaction: undefined, redirectUrl: undefined,
+    });
+  }
   private completedCallback(id: string, durable: FinalizedOwnership): OnboardingCallbackResult {
     return { sessionId: id, status: "COMPLETED", returnUrl: this.deps.config.returnUrls[durable.clientId] === durable.returnUrl ? durable.returnUrl : null };
   }

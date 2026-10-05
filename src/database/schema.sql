@@ -63,6 +63,36 @@ CREATE TABLE loyalty_card_identifiers (
     UNIQUE (user_id, program_id, fingerprint)
 );
 
+
+-- Data-driven loyalty wallet; additive to the encrypted card vault.
+ALTER TABLE loyalty_programs ADD COLUMN configuration JSONB NOT NULL DEFAULT '{"retailerName":"Independent program","category":"OTHER","barcodeFormat":"UNKNOWN","capabilities":{"digitalCard":false,"staticBarcode":false,"manualEntry":true,"barcodeScanning":true,"rewardsInformation":true},"verification":{"barcodeFormatVerified":false,"numberFormatVerified":false,"digitalReproductionAllowed":false,"templateVerified":false},"status":"CATALOGUE_ONLY","active":true}'::jsonb, ADD COLUMN current_template_version INTEGER, ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ADD CHECK (jsonb_typeof(configuration) = 'object');
+INSERT INTO loyalty_programs (id,name,requires_custom_name) VALUES ('xtra-savings','Xtra Savings',false) ON CONFLICT (id) DO NOTHING;
+UPDATE loyalty_programs SET configuration = '{"retailerName":"Shoprite / Checkers","category":"GROCERY","barcodeFormat":"UNKNOWN","capabilities":{"digitalCard":false,"staticBarcode":false,"manualEntry":true,"barcodeScanning":true,"rewardsInformation":true},"verification":{"barcodeFormatVerified":false,"numberFormatVerified":false,"digitalReproductionAllowed":false,"templateVerified":false},"status":"CATALOGUE_ONLY","active":true,"officialUrl":"https://www.checkers.co.za/","rewardType":"MEMBER_OFFERS"}'::jsonb WHERE id = 'xtra-savings';
+INSERT INTO loyalty_programs (id,name,requires_custom_name) VALUES ('smart-shopper','Smart Shopper',false) ON CONFLICT (id) DO NOTHING;
+UPDATE loyalty_programs SET configuration = '{"retailerName":"Pick n Pay","category":"GROCERY","barcodeFormat":"UNKNOWN","capabilities":{"digitalCard":false,"staticBarcode":false,"manualEntry":true,"barcodeScanning":true,"rewardsInformation":true},"verification":{"barcodeFormatVerified":false,"numberFormatVerified":false,"digitalReproductionAllowed":false,"templateVerified":false},"status":"CATALOGUE_ONLY","active":true,"officialUrl":"https://smartshopper.pnp.co.za/","rewardType":"REWARDS"}'::jsonb WHERE id = 'smart-shopper';
+INSERT INTO loyalty_programs (id,name,requires_custom_name) VALUES ('clicks-clubcard','Clicks ClubCard',false) ON CONFLICT (id) DO NOTHING;
+UPDATE loyalty_programs SET configuration = '{"retailerName":"Clicks","category":"HEALTH_AND_BEAUTY","barcodeFormat":"UNKNOWN","capabilities":{"digitalCard":false,"staticBarcode":false,"manualEntry":true,"barcodeScanning":true,"rewardsInformation":true},"verification":{"barcodeFormatVerified":false,"numberFormatVerified":false,"digitalReproductionAllowed":false,"templateVerified":false},"status":"CATALOGUE_ONLY","active":true,"officialUrl":"https://clicks.co.za/clubcard","rewardType":"REWARDS"}'::jsonb WHERE id = 'clicks-clubcard';
+INSERT INTO loyalty_programs (id,name,requires_custom_name) VALUES ('dis-chem-better-rewards','Better Rewards',false) ON CONFLICT (id) DO NOTHING;
+UPDATE loyalty_programs SET configuration = '{"retailerName":"Dis-Chem","category":"PHARMACY","barcodeFormat":"UNKNOWN","capabilities":{"digitalCard":false,"staticBarcode":false,"manualEntry":true,"barcodeScanning":true,"rewardsInformation":true},"verification":{"barcodeFormatVerified":false,"numberFormatVerified":false,"digitalReproductionAllowed":false,"templateVerified":false},"status":"CATALOGUE_ONLY","active":true,"officialUrl":"https://www.dischem.co.za/better-rewards","rewardType":"MEMBER_OFFERS"}'::jsonb WHERE id = 'dis-chem-better-rewards';
+INSERT INTO loyalty_programs (id,name,requires_custom_name) VALUES ('spar-rewards','SPAR Rewards',false) ON CONFLICT (id) DO NOTHING;
+UPDATE loyalty_programs SET configuration = '{"retailerName":"SPAR","category":"GROCERY","barcodeFormat":"UNKNOWN","capabilities":{"digitalCard":false,"staticBarcode":false,"manualEntry":true,"barcodeScanning":true,"rewardsInformation":true},"verification":{"barcodeFormatVerified":false,"numberFormatVerified":false,"digitalReproductionAllowed":false,"templateVerified":false},"status":"CATALOGUE_ONLY","active":true,"officialUrl":"https://www.spar.co.za/","rewardType":"MEMBER_OFFERS"}'::jsonb WHERE id = 'spar-rewards';
+INSERT INTO loyalty_programs (id,name,requires_custom_name) VALUES ('shell-v-plus','V+ Rewards',false) ON CONFLICT (id) DO NOTHING;
+UPDATE loyalty_programs SET configuration = '{"retailerName":"Shell","category":"FUEL","barcodeFormat":"UNKNOWN","capabilities":{"digitalCard":false,"staticBarcode":false,"manualEntry":true,"barcodeScanning":true,"rewardsInformation":true},"verification":{"barcodeFormatVerified":false,"numberFormatVerified":false,"digitalReproductionAllowed":false,"templateVerified":false},"status":"CATALOGUE_ONLY","active":true,"officialUrl":"https://www.shell.co.za/motorists/loyalty-payment/vplus-rewards.html","rewardType":"REWARDS"}'::jsonb WHERE id = 'shell-v-plus';
+INSERT INTO loyalty_programs (id,name,requires_custom_name) VALUES ('other','Other',true) ON CONFLICT (id) DO NOTHING;
+UPDATE loyalty_programs SET configuration = '{"retailerName":"Independent program","category":"OTHER","barcodeFormat":"UNKNOWN","capabilities":{"digitalCard":false,"staticBarcode":false,"manualEntry":true,"barcodeScanning":true,"rewardsInformation":true},"verification":{"barcodeFormatVerified":false,"numberFormatVerified":false,"digitalReproductionAllowed":false,"templateVerified":false},"status":"CATALOGUE_ONLY","active":true}'::jsonb WHERE id = 'other';
+CREATE TABLE loyalty_card_templates (
+    program_id TEXT NOT NULL REFERENCES loyalty_programs(id),
+    version INTEGER NOT NULL CHECK (version > 0),
+    template_json JSONB NOT NULL CHECK (jsonb_typeof(template_json) = 'object'),
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (program_id, version)
+);
+INSERT INTO loyalty_card_templates (program_id, version, template_json) SELECT id, 1, '{"aspectRatio":1.585772508336421,"background":{"type":"solid","colors":["#F3F0E8"]},"barcode":{"x":0.07,"y":0.52,"width":0.86,"height":0.33,"backgroundColor":"#FFFFFF","foregroundColor":"#000000","showNumber":true},"attribution":"Independent loyalty wallet. No retailer affiliation is implied."}'::jsonb FROM loyalty_programs;
+UPDATE loyalty_programs SET current_template_version = 1;
+ALTER TABLE loyalty_programs ADD FOREIGN KEY (id, current_template_version) REFERENCES loyalty_card_templates(program_id, version);
+ALTER TABLE loyalty_cards ADD COLUMN template_version INTEGER, ADD FOREIGN KEY (program_id, template_version) REFERENCES loyalty_card_templates(program_id, version);
+
 -- Linked Wallet Addresses
 CREATE TABLE wallets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -219,7 +249,7 @@ CREATE TABLE transfers (
     outgoing_payment_url TEXT UNIQUE,
     status TEXT NOT NULL DEFAULT 'CREATING' CHECK (status IN (
       'CREATING', 'AWAITING_AUTHORIZATION', 'FINALIZING', 'AUTHORIZED',
-      'SUBMITTING', 'PENDING', 'COMPLETED', 'FAILED', 'EXPIRED', 'UNKNOWN'
+      'SUBMITTING', 'PENDING', 'COMPLETED', 'FAILED', 'EXPIRED', 'UNKNOWN', 'CANCELLED'
     )),
     error_code TEXT,
     callback_fingerprint CHAR(64),

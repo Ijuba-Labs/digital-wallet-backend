@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "@/utils/appError";
-import { sendSuccess } from "@/utils/apiResponse";
+import { sendSuccess, sendNoContent } from "@/utils/apiResponse";
 import { logger } from "@/utils/logger";
 import type { OnboardingService } from "@/services/onboarding.service";
 import {
@@ -10,7 +10,7 @@ import {
 import { idempotencyKeySchema } from "@/validators/transfer.validator";
 
 export class OnboardingController {
-  constructor(private readonly onboardingService: Pick<OnboardingService, "start" | "requestConsent" | "handleCallback" | "getStatus">) { }
+  constructor(private readonly onboardingService: Pick<OnboardingService, "start" | "requestConsent" | "handleCallback" | "getStatus" | "cancel">) { }
   /**
    * POST /api/v1/onboarding/start
    * Begins the onboarding flow: creates session and resolves wallet.
@@ -105,9 +105,16 @@ export class OnboardingController {
       }
 
       const processing = result.status === "FINALIZING";
-      if (processing) res.setHeader("Retry-After", "2");
+      if (processing) {
+        res.setHeader("Retry-After", "2");
+        // The provider may require a second continuation after its wait period.
+        // Revisit this same proof-bearing URL without reflecting it in HTML.
+        res.setHeader("Refresh", "2");
+      }
       res.status(processing ? 202 : 200).type("html").send(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Wallet authorization</title></head><body><h1>Authorization received</h1><p>Return to your application to check onboarding status. If this page reports processing, refresh it after a few seconds.</p></body></html>",
+        processing
+          ? "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Connecting your wallet</title></head><body><h1>Connecting your wallet</h1><p>Please keep this page open while we finish connecting your wallet. It will refresh automatically.</p></body></html>"
+          : "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Wallet connected</title></head><body><h1>Authorization received</h1><p>Your wallet is connected. Close this browser tab and return to your app.</p></body></html>",
       );
     } catch (error) {
       // Unverified callbacks never select a destination or expose provider errors.
@@ -135,7 +142,7 @@ export class OnboardingController {
           presentFields: ["session_id", "interact_ref", "hash"].filter((field) => Object.hasOwn(req.query, field)) } : {}) },
         "Wallet authorization callback rejected");
       res.status(statusCode).type("html").send(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Wallet authorization</title></head><body><h1>Unable to complete authorization</h1><p>Return to your application to check status or start a new onboarding session.</p></body></html>",
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Wallet authorization</title></head><body><h1>Unable to complete authorization</h1><p>Return to your application to check status or start a new onboarding session.</p></body></html>",
       );
     }
   };
@@ -161,5 +168,13 @@ export class OnboardingController {
     } catch (error) {
       next(error);
     }
+  };
+
+  cancel = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.user?.id) throw new AppError("Access token is required", 401);
+      await this.onboardingService.cancel(String(req.params.sessionId), req.user.id);
+      sendNoContent(res);
+    } catch (error) { next(error); }
   };
 }

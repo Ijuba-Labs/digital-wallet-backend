@@ -26,6 +26,6 @@ const logger = pino({
         }
       : undefined,
   // Standard redact list to prevent accidental credential leakage
-  redact: { paths: ["req.headers.authorization", "password", "token", "creditCard", "accessToken", "access_token", "pendingGrant", "token_enc", "*.access_token", "*.accessToken", "*.token_enc"], censor: "[REDACTED]" },
+  redact: { paths: ["membershipNumber", "barcodePayload", "cardNumber", "barcodeValue", "*.membershipNumber", "*.barcodePayload", "*.cardNumber", "*.barcodeValue", "req.body", "res.body", "req.headers.authorization", "password", "token", "creditCard", "accessToken", "access_token", "pendingGrant", "token_enc", "*.access_token", "*.accessToken", "*.token_enc"], censor: "[REDACTED]" },
 });
 export { logger };

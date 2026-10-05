@@ -188,6 +188,79 @@ onboarding.
 
 ## P2P transfers with Open Payments
 
+### Find a recipient
+
+```http
+GET /api/v1/recipients/search?q=Sipho&limit=10
+Authorization: Bearer <access-token>
+```
+
+```json
+{"success":true,"data":[{"recipientUserId":"a-recipient-uuid","displayName":"Sipho Dlamini"}]}
+```
+
+URL-encode `q` (especially `+` in international phone numbers). Name searches
+match case-insensitive prefixes of first, last, or full names in either order.
+Email and phone searches require the complete value; email is case-insensitive
+and phone punctuation is ignored. Phone searches do not convert local numbers
+to international numbers. `q` requires 3–254 characters (names at most 100).
+`limit` defaults to 10 and accepts 1–20. No matches return an empty array.
+
+Results exclude yourself and include only active users with a linked wallet
+whose ownership has been verified. They contain only the recipient ID and
+display name, never email, phone, wallet URLs, or credentials. Responses use
+`Cache-Control: no-store`. Pass the selected `recipientUserId` to the transfer
+endpoint; wallet eligibility is checked again when preparing the transfer.
+
+Missing authentication returns `401`, invalid parameters `400`. Searches are
+limited to 30 per minute per authenticated user (`429` with `Retry-After`);
+an unavailable rate limiter returns `503`. `pnpm test:recipients` runs the
+HTTP and service tests without Docker; the repository tests run with the normal
+PostgreSQL-backed `pnpm test` suite. No schema migration is required.
+
+### Cancel or decline a transfer
+
+Only the sender can cancel a persisted transfer:
+
+```http
+POST /api/v1/transfers/<transferId>/cancel
+Authorization: Bearer <access-token>
+```
+
+Success is `200` with the usual transfer envelope and `data.status: "CANCELLED"`,
+`data.errorCode: "USER_CANCELLED"`. Repeating cancellation is safe. Recipients and
+unrelated users receive `404`. Cancellation is allowed in `CREATING`,
+`AWAITING_AUTHORIZATION`, and `FINALIZING`. A database transition decides races
+with approval: once approval is confirmed as `AUTHORIZED`, cancellation returns
+`409`, as do submitted, completed, failed, expired, or unresolved payments.
+Do not present cancellation as successful after a `409`.
+
+If the create request is still in flight and its transfer ID is unknown, send
+`POST /api/v1/transfers/cancel` with the same `Authorization` and original
+`Idempotency-Key` headers. If creation has not yet reserved its record, the API
+returns `409` with `Retry-After: 1`; retry cancellation with that key until the
+transfer is found or the create request finishes. Aborting the client's HTTP
+request alone does not cancel a transfer.
+
+Rafiki decline redirects include `result=grant_rejected` without an approval
+hash. New transfers include a separate random `cancel_token` in their callback
+URL, stored encrypted with the session. A valid decline callback marks the
+transfer `CANCELLED` with `AUTHORIZATION_DECLINED`; an unprotected or forged
+redirect cannot change the payment. Verified continuation `request_denied`
+responses also cancel the transfer. Older pending transfers without this token
+can still be cancelled through the authenticated API. If the provider/browser
+does not return a decline callback, the app should call the authenticated cancel
+endpoint when the user chooses Cancel.
+
+Cancellation is durable before provider cleanup. The recovery worker cancels
+pending grants, completes unused incoming resources, and revokes temporary
+credentials. Provider downtime leaves cleanup scheduled for retry without
+allowing the transfer to be submitted. Display `CANCELLED` as a terminal state
+in Android and stop approval/status polling for it. Apply `pnpm db:migrate`
+before deploying this code to an existing database.
+
+### Prepare and authorize a transfer
+
 The P2P API follows the [fixed-debit remittance flow](https://openpayments.dev/guides/onetime-remittance-fixed-debit/):
 create a recipient incoming payment, create a sender quote, request approval for
 that amount and recipient, verify the callback, then submit an outgoing payment.
@@ -205,12 +278,18 @@ Both users need active accounts and active linked wallets with completed consent
 | GET | `/api/v1/transfers/callback` | Public provider callback, verified using the GNAP hash |
 | GET | `/api/v1/transfers/:id` | Read and refresh a transfer's provider status |
 | GET | `/api/v1/transfers?limit=20&offset=0` | Read persisted sent and received history |
+| POST | `/api/v1/transfers/:id/cancel` | Sender cancels before approval is confirmed |
+| POST | `/api/v1/transfers/cancel` | Cancel an in-flight creation using its original `Idempotency-Key` |
 
 All endpoints except the callback require `Authorization: Bearer <access-token>`.
 Only the sender and recipient can read a transfer; only the sender receives its
 authorization URL. History is ordered newest first and supports limits from
-1–100, with a `pagination.hasMore` flag. History is a stored snapshot; use the
-individual status endpoint to refresh a payment.
+1–100, with a `pagination.hasMore` flag. History refreshes up to ten stale
+`PENDING`/`UNKNOWN` transfers per page with at most four concurrent provider reads;
+checks are coalesced for five seconds. Remaining rows are stored snapshots and
+continue to be reconciled by the worker. Use the individual status endpoint to
+refresh a particular payment. A provider failure preserves history with
+`statusRefreshAvailable: false` on the affected row. History never submits payments.
 
 Start a transfer with a unique `Idempotency-Key` header (a UUID is recommended):
 
@@ -257,6 +336,7 @@ or expired transfers. Preparation errors after reservation include
 
 Transfers progress through `CREATING`, `AWAITING_AUTHORIZATION`, `FINALIZING`,
 `AUTHORIZED`, `SUBMITTING`, and `PENDING`, then `COMPLETED` or `FAILED`.
+Pre-approval transfers can also end as `CANCELLED`.
 Authorization sessions expire after at most 15 minutes, shortened to the quote
 or incoming-payment expiry. The worker expires unused sessions and marks
 interrupted preparation or authorization as failed. An interrupted outgoing
@@ -301,7 +381,7 @@ setting. Production requires a public HTTPS origin. A physical phone cannot
 reach your Mac through `localhost`; use your public HTTPS tunnel/API origin.
 Restart the API after changing configuration.
 
-With no client configured, onboarding works now and ends on an API-hosted
+With no return URL configured, API and mobile onboarding end on an API-hosted
 completion page. `FRONTEND_URL` is optional and no longer controls onboarding.
 Start a fresh session after deploying this change: older sessions do not have
 the nonce and destination information needed to verify callbacks.
@@ -336,13 +416,16 @@ ONBOARDING_MOBILE_RETURN_URL=https://links.example.com/onboarding/return
 ```
 
 Then start with `clientId: "web"` or `clientId: "mobile"`. An unconfigured
-client receives 400. Start requests cannot supply arbitrary return URLs, and
+web client receives 400. A mobile client with no return URL uses the API
+completion page and authenticated status polling. Start requests cannot supply arbitrary return URLs, and
 callback parameters cannot change the destination. The destination is saved
 with the session; removing/changing it in server configuration makes existing
 sessions fall back to the API page. Local HTTP is allowed only for API/web
 development URLs on loopback hosts.
 
-Successful callbacks redirect to the saved destination with **only**
+Processing callbacks return 202 and automatically refresh the browser after
+two seconds to finish provider continuations. Keep that browser page open until
+it shows completion. Successful callbacks redirect to the saved destination with **only**
 `?session_id=...`. No access tokens, continuation credentials, or interaction
 proofs are forwarded. The returning client should match this ID to its saved
 session and fetch authenticated status. Mobile clients must configure their
@@ -391,7 +474,13 @@ unique across users while LINKED; a competing owner receives HTTP 409. The same 
 verify the wallet again.
 
 Incoming authority uses a wallet-bound create grant followed by an exact
-incoming-resource read/complete grant. Unsupported or broader grants fail closed.
+recipient-wallet-bound read/complete grant. Rafiki checks incoming permissions
+against the wallet address. Receipt reads still target and validate the exact
+incoming-payment URL, recipient wallet, currency, scale, and quoted receive amount.
+Unsupported or broader grants fail closed. Expired receipt credentials can be
+replaced with the same read/complete scope after cleanup; no spending grant is
+requested. Receipt is checked before sender status so an expired sender token
+cannot block confirmation of funds already delivered.
 Temporary create and quote tokens are encrypted until revocation succeeds or
 known expiry. Credentials from unresolved rotations remain unavailable and
 retained. Expired credentials are never rotated or used for provider requests.

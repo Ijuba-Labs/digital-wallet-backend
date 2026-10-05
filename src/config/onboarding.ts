@@ -27,7 +27,9 @@ export const createOnboardingConfig = (input: {
   const api = validateUrl(input.apiPublicUrl, "API_PUBLIC_URL", input.allowLocalHttp ?? false);
   if (api.pathname !== "/") throw new Error("API_PUBLIC_URL must contain only the public API origin");
 
-  const returnUrls: Partial<Record<OnboardingClientId, string | null>> = { api: null };
+  // Mobile clients can resume and poll status without an App Link domain,
+  // including local development via ADB reverse port forwarding.
+  const returnUrls: Partial<Record<OnboardingClientId, string | null>> = { api: null, mobile: null };
   if (input.webReturnUrl) {
     returnUrls.web = validateUrl(input.webReturnUrl, "ONBOARDING_WEB_RETURN_URL", input.allowLocalHttp ?? false).href;
   }

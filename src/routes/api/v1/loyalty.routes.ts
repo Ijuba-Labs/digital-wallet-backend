@@ -46,16 +46,35 @@ async function multipart(req: Request, requireCard: boolean): Promise<{ card: un
   });
 }
 
-export function createLoyaltyRouter(requireAuth: RequestHandler, service: LoyaltyService) {
+export function createLoyaltyRouter(requireAuth: RequestHandler, service: LoyaltyService, rateLimit: RequestHandler) {
   const router = Router();
-  router.get("/loyalty-programs", async (_req, res, next) => {
-    try { sendSuccess(res, await service.programs()); } catch (error) { next(error); }
+  router.get("/loyalty-programs", async (req, res, next) => {
+    try { sendSuccess(res, await service.programs(req.query)); } catch (error) { next(error); }
+  });
+  router.get("/loyalty-programs/:id", async (req, res, next) => {
+    try { sendSuccess(res, await service.programDetails(String(req.params.id))); } catch (error) { next(error); }
+  });
+  router.get("/loyalty-programs/:id/template", async (req, res, next) => {
+    try {
+      if (Object.keys(req.query).some(key => key !== "version") || req.query.version !== undefined &&
+        (typeof req.query.version !== "string" || !/^[1-9][0-9]{0,8}$/.test(req.query.version))) throw new AppError("Invalid template version", 400);
+      sendSuccess(res, await service.template(String(req.params.id), req.query.version ? Number(req.query.version) : undefined));
+    } catch (error) { next(error); }
   });
   router.use("/loyalty-cards", (_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     next();
-  }, requireAuth);
+  }, requireAuth, rateLimit);
+  router.post("/loyalty-cards/preview", async (req, res, next) => {
+    try {
+      if (!req.is("application/json")) throw new AppError("Use JSON", 415);
+      sendSuccess(res, await service.preview(req.body));
+    } catch (error) { next(error); }
+  });
+  router.get("/loyalty-cards/:id/checkout", async (req, res, next) => {
+    try { sendSuccess(res, await service.checkout(req.user!.id, String(req.params.id))); } catch (error) { next(error); }
+  });
   router.get("/loyalty-cards", async (req, res, next) => {
     try { sendSuccess(res, await service.list(req.user!.id)); } catch (error) { next(error); }
   });

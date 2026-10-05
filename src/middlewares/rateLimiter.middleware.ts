@@ -13,8 +13,8 @@ export const createPaymentRateLimits = (redis: Redis) => {
         if count == 1 then redis.call('PEXPIRE', KEYS[1], 60000) end
         return {count, redis.call('PTTL', KEYS[1])}
       `, 1, key) as [number, number];
-    } catch { throw new AppError("Payment rate limiting is unavailable", 503); }
-    if (result[0] > maximum) throw new AppError("Too many payment requests", 429, { retryAfter: Math.max(1, Math.ceil(result[1] / 1000)) });
+    } catch { throw new AppError(scope === "loyalty" ? "Loyalty wallet is temporarily unavailable" : scope === "recipient-search" ? "Recipient search rate limiting is unavailable" : "Payment rate limiting is unavailable", 503); }
+    if (result[0] > maximum) throw new AppError(scope === "loyalty" ? "Too many loyalty wallet requests. Please try again shortly" : scope === "recipient-search" ? "Too many recipient searches" : "Too many payment requests", 429, { retryAfter: Math.max(1, Math.ceil(result[1] / 1000)) });
   };
   const middleware = (scope: string, maximum: number, authenticated: boolean): RequestHandler => async (req, res, next) => {
     try {
@@ -50,7 +50,8 @@ export const createPaymentRateLimits = (redis: Redis) => {
     if (result[0] !== 1) throw new AppError("Too many payment requests", 429,
       { retryAfter: Math.max(1, Math.ceil(result[1] / 1000)) });
   };
-  return { create: middleware("create", 10, true), callback: middleware("callback", 60, false),
+  return { loyalty: middleware("loyalty", 120, true), recipientSearch: middleware("recipient-search", 30, true),
+    create: middleware("create", 10, true), callback: middleware("callback", 60, false),
     status: middleware("status", 60, true), wallet };
 };
 export type PaymentRateLimits = ReturnType<typeof createPaymentRateLimits>;

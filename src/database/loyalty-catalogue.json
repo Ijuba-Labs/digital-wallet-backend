@@ -1,0 +1,9 @@
+[
+  { "id": "xtra-savings", "name": "Xtra Savings", "retailerName": "Shoprite / Checkers", "category": "GROCERY", "officialUrl": "https://www.checkers.co.za/", "rewardType": "MEMBER_OFFERS" },
+  { "id": "smart-shopper", "name": "Smart Shopper", "retailerName": "Pick n Pay", "category": "GROCERY", "officialUrl": "https://smartshopper.pnp.co.za/", "rewardType": "REWARDS" },
+  { "id": "clicks-clubcard", "name": "Clicks ClubCard", "retailerName": "Clicks", "category": "HEALTH_AND_BEAUTY", "officialUrl": "https://clicks.co.za/clubcard", "rewardType": "REWARDS" },
+  { "id": "dis-chem-better-rewards", "name": "Better Rewards", "retailerName": "Dis-Chem", "category": "PHARMACY", "officialUrl": "https://www.dischem.co.za/better-rewards", "rewardType": "MEMBER_OFFERS" },
+  { "id": "spar-rewards", "name": "SPAR Rewards", "retailerName": "SPAR", "category": "GROCERY", "officialUrl": "https://www.spar.co.za/", "rewardType": "MEMBER_OFFERS" },
+  { "id": "shell-v-plus", "name": "V+ Rewards", "retailerName": "Shell", "category": "FUEL", "officialUrl": "https://www.shell.co.za/motorists/loyalty-payment/vplus-rewards.html", "rewardType": "REWARDS" },
+  { "id": "other", "name": "Other", "retailerName": "Independent program", "category": "OTHER", "requiresCustomName": true }
+]

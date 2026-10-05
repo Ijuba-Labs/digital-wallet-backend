@@ -3,7 +3,7 @@ import type { GrantInteraction } from "@/utils/grant-interaction";
 
 export type PaymentAmount = OutgoingPayment["debitAmount"];
 export type TransferStatus = "CREATING" | "AWAITING_AUTHORIZATION" | "FINALIZING" | "AUTHORIZED" |
-  "SUBMITTING" | "PENDING" | "COMPLETED" | "FAILED" | "EXPIRED" | "UNKNOWN";
+  "SUBMITTING" | "PENDING" | "COMPLETED" | "FAILED" | "EXPIRED" | "UNKNOWN" | "CANCELLED";
 export interface WalletSnapshot { id: string; assetCode: string; assetScale: number; authServer: string; resourceServer: string }
 export interface CreateTransferInput { recipientUserId: string; senderWalletId?: string; amount: string; description?: string }
 export interface TransferWallet { id: string; walletAddressUrl: string; assetCode: string; assetScale: number }
@@ -66,6 +66,7 @@ export interface TransferCredential {
   state: "READY" | "ROTATING" | "UNAVAILABLE" | "REJECTED";
 }
 export interface PaymentSession extends GrantInteraction {
+  cancelNonce?: string;
   transferId: string;
   pendingGrant: PendingGrant;
   continueAfter: number;
@@ -73,6 +74,7 @@ export interface PaymentSession extends GrantInteraction {
   interactionSent?: boolean;
 }
 export interface TransferRepositoryInterface {
+  cancel(id: string, senderUserId: string, reason?: "USER_CANCELLED" | "AUTHORIZATION_DECLINED"): Promise<TransferRecord | undefined>;
   findWallet(userId: string, walletId?: string): Promise<TransferWallet | undefined>;
   findById(id: string): Promise<TransferRecord | undefined>;
   findByIdempotencyKey(userId: string, key: string): Promise<TransferRecord | undefined>;

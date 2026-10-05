@@ -6,7 +6,7 @@ describe("Onboarding destinations", () => {
     const config = createOnboardingConfig({ apiPublicUrl: "https://api.example.com" });
     expect(getOnboardingReturnUrl(config, "api")).toBeNull();
     expect(() => getOnboardingReturnUrl(config, "web")).toThrow("not configured");
-    expect(() => getOnboardingReturnUrl(config, "mobile")).toThrow("not configured");
+    expect(getOnboardingReturnUrl(config, "mobile")).toBeNull();
   });
 
   it("permits local HTTP for development API/web destinations", () => {
@@ -37,5 +37,11 @@ describe("Onboarding destinations", () => {
   it("rejects a production loopback API or API URL with a path", () => {
     expect(() => createOnboardingConfig({ apiPublicUrl: "http://localhost:9001" })).toThrow();
     expect(() => createOnboardingConfig({ apiPublicUrl: "https://api.example.com/v1" })).toThrow();
+  });
+
+  it("supports development mobile callbacks through ADB port forwarding", () => {
+    const config = createOnboardingConfig({ apiPublicUrl: "http://localhost:9001", allowLocalHttp: true });
+    expect(getOnboardingReturnUrl(config, "mobile")).toBeNull();
+    expect(getOnboardingReturnUrl(config, "api")).toBeNull();
   });
 });

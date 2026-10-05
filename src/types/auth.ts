@@ -8,6 +8,7 @@ import type { OnboardingController } from "@/controllers/onboarding.controller";
 import type { createWalletController } from "@/controllers/wallet.controller";
 import type { TransferController } from "@/controllers/transfer.controller";
 import type { LoyaltyService } from "@/services/loyalty.service";
+import type { RecipientService } from "@/services/recipient.service";
 
 export interface RegisterInput extends User {
     password: string;
@@ -68,6 +69,7 @@ export type RouterDependencies = {
     walletController: ReturnType<typeof createWalletController>;
     transferController: TransferController;
     loyaltyService: LoyaltyService;
+    recipientService: RecipientService;
     rateLimits: PaymentRateLimits;
     requireAuth: RequestHandler;
 };
