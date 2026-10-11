@@ -42,7 +42,7 @@ describe("Onboarding callback HTTP contract", () => {
     expect(t.service.handleCallback).toHaveBeenCalledWith("onb_example", "ref", "proof");
   });
 
-  it.each(["https://app.example.com/onboarding/return", "https://links.example.com/onboarding/return"])(
+  it.each(["ijubapay://approval/wallet", "https://app.example.com/onboarding/return", "https://links.example.com/onboarding/return"])(
     "redirects only to the stored destination %s, with only the session ID", async (returnUrl) => {
       const t = setup();
       t.service.handleCallback.mockResolvedValue({ sessionId: "onb_example", status: "COMPLETED", returnUrl });

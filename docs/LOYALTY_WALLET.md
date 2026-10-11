@@ -99,3 +99,11 @@ Tests cover rules, EAN checksums, masking, template boundaries, verification gat
 ### Implementation verification record
 
 On 2026-10-05: production typecheck and build passed; 20 loyalty tests passed (8 unit/HTTP security, 12 PostgreSQL/vault/API integration); 95 existing regression tests passed (43 onboarding, 26 recipient, 26 payment/status/cancellation/mobile-configuration). PostgreSQL tests used a temporary local cluster because Docker was unavailable. Migration testing covered both the fresh SQL baseline and populated legacy vault upgrade. No application database migration or deployment was performed.
+
+### Managed visual layout fields
+
+Optional, backward-compatible template fields: `cornerRadius` (fraction of card height, 0–0.2), `brand` (text, normalized rectangle, hex color, `fontSize` as a fraction of card height, optional `letterSpacing` relative to font size, and `DEFAULT`/`CONDENSED` font family), `stripes` (hex color, opacity at most 0.25, count 2–12), and barcode `cornerRadius` plus `numberGroupSize` (1–8). Number grouping is display-only; identifiers and encoded payloads remain unchanged. Layouts must never contain customer numbers or barcode values. Existing published templates remain immutable.
+
+`docs/loyalty/xtra-savings.template-draft.json` is a reviewable draft, not a verified or published program. Add an approved raster logo URL and normalized logo region through the existing `logo` field if available; do not embed customer data. Review the entire configuration and choose a version greater than every existing version before using the existing publication CLI. Publishing artwork does not verify retailer acceptance, and existing pinned cards retain their published version. The Android expanded Cards list renders enabled pinned templates; checkout retains its barcode-only presentation.
+
+Backgrounds optionally specify `material`: `FLAT`, `MATTE_PLASTIC`, or `GLOSSY_PLASTIC`. Android defaults to subtle matte plastic for legacy templates and draws deterministic lighting, fine grain and edge highlights behind all content. Barcode panels remain opaque white. Per-card image colour suggestions and customer overrides are account-scoped encrypted Android preferences on this device; they do not alter published templates or synchronize through the backend.

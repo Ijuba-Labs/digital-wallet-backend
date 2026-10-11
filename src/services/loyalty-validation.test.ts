@@ -46,3 +46,38 @@ describe("loyalty safety contracts", () => {
     expect(programConfigurationSchema.safeParse({ ...configuration, verification: { ...configuration.verification, barcodeSource: undefined } }).success).toBe(false);
   });
 });
+
+
+describe("managed card artwork", () => {
+  const layout = {
+    aspectRatio: 1.6, cornerRadius: 0.045,
+    background: { type: "gradient", colors: ["#43206A", "#692268", "#43206A"] },
+    brand: { text: "XTRA SAVINGS", x: 0.3, y: 0.1, width: 0.6, height: 0.26,
+      color: "#FFF200", fontSize: 0.12, fontFamily: "CONDENSED", letterSpacing: 0.18 },
+    stripes: { color: "#241038", opacity: 0.18, count: 6 },
+    barcode: { x: 0.022, y: 0.46, width: 0.956, height: 0.49, cornerRadius: 0.035,
+      backgroundColor: "#FFFFFF", foregroundColor: "#000000", showNumber: true, numberGroupSize: 4 },
+  };
+  it("accepts optional layout fields and retains legacy templates", () => {
+    expect(cardTemplateSchema.safeParse(layout).success).toBe(true);
+    expect(cardTemplateSchema.safeParse(neutralTemplate).success).toBe(true);
+  });
+  it("rejects out-of-bounds branding, excessive decoration, invalid grouping and embedded personal data", () => {
+    for (const candidate of [
+      { ...layout, brand: { ...layout.brand, x: 0.9 } },
+      { ...layout, stripes: { ...layout.stripes, opacity: 0.9 } },
+      { ...layout, barcode: { ...layout.barcode, numberGroupSize: 0 } },
+      { ...layout, barcode: { ...layout.barcode, value: "personal-number" } },
+      { ...layout, cornerRadius: 0.8 },
+    ]) expect(cardTemplateSchema.safeParse(candidate).success).toBe(false);
+  });
+});
+
+
+describe("card materials", () => {
+  it("accepts supported materials while preserving old templates", () => {
+    for (const material of ["FLAT", "MATTE_PLASTIC", "GLOSSY_PLASTIC"])
+      expect(cardTemplateSchema.safeParse({ ...neutralTemplate, background: { ...neutralTemplate.background, material } }).success).toBe(true);
+    expect(cardTemplateSchema.safeParse({ ...neutralTemplate, background: { ...neutralTemplate.background, material: "UNKNOWN" } }).success).toBe(false);
+  });
+});

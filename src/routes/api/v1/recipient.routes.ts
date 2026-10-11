@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import type { RecipientService } from "@/services/recipient.service";
-import { recipientSearchSchema } from "@/validators/recipient.validator";
+import { recipientSearchSchema, recentRecipientsSchema } from "@/validators/recipient.validator";
 import { AppError } from "@/utils/appError";
 import { sendSuccess } from "@/utils/apiResponse";
 
@@ -17,6 +17,14 @@ export function createRecipientRouter(requireAuth: RequestHandler, limitSearch: 
       if (!input.success) throw new AppError("Use q with 3–254 characters and limit between 1 and 20", 400);
       if (!req.user?.id) throw new AppError("Access token is required", 401);
       sendSuccess(res, await service.search(req.user.id, input.data));
+    } catch (error) { next(error); }
+  });
+  router.get("/recent", limitSearch, async (req, res, next) => {
+    try {
+      const input = recentRecipientsSchema.safeParse(req.query);
+      if (!input.success) throw new AppError("Use limit between 1 and 20", 400);
+      if (!req.user?.id) throw new AppError("Access token is required", 401);
+      sendSuccess(res, await service.recent(req.user.id, input.data));
     } catch (error) { next(error); }
   });
   return router;

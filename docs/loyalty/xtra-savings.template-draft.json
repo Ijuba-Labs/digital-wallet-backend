@@ -1,0 +1,68 @@
+{
+  "id": "xtra-savings",
+  "name": "Xtra Savings",
+  "configuration": {
+    "retailerName": "Shoprite / Checkers",
+    "category": "GROCERY",
+    "description": "Draft artwork from a user supplied visual specification. Review branding and approved assets before publication.",
+    "barcodeFormat": "UNKNOWN",
+    "capabilities": {
+      "digitalCard": false,
+      "staticBarcode": false,
+      "manualEntry": true,
+      "barcodeScanning": true,
+      "rewardsInformation": true
+    },
+    "verification": {
+      "barcodeFormatVerified": false,
+      "numberFormatVerified": false,
+      "digitalReproductionAllowed": false,
+      "templateVerified": false
+    },
+    "status": "CATALOGUE_ONLY",
+    "active": true
+  },
+  "template": {
+    "version": 2,
+    "layout": {
+      "aspectRatio": 1.585772508336421,
+      "cornerRadius": 0.045,
+      "background": {
+        "type": "gradient",
+        "colors": [
+          "#43206A",
+          "#692268",
+          "#43206A"
+        ],
+        "material": "MATTE_PLASTIC"
+      },
+      "brand": {
+        "text": "XTRA SAVINGS",
+        "x": 0.05,
+        "y": 0.2,
+        "width": 0.9,
+        "height": 0.1,
+        "color": "#FFF200",
+        "fontSize": 0.08,
+        "fontFamily": "CONDENSED",
+        "letterSpacing": 0.1
+      },
+      "stripes": {
+        "color": "#241038",
+        "opacity": 0.18,
+        "count": 6
+      },
+      "barcode": {
+        "x": 0.022,
+        "y": 0.32,
+        "width": 0.956,
+        "height": 0.63,
+        "cornerRadius": 0.035,
+        "backgroundColor": "#FFFFFF",
+        "foregroundColor": "#000000",
+        "showNumber": true,
+        "numberGroupSize": 4
+      }
+    }
+  }
+}

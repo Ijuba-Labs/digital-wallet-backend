@@ -10,6 +10,7 @@ import { createRecipientRouter } from "./recipient.routes";
 const path = "/api/v1/recipients/search";
 function setup() {
   const search = jest.fn<RecipientService["search"]>().mockResolvedValue([]);
+  const recent = jest.fn<RecipientService["recent"]>().mockResolvedValue([]);
   let count = 0;
   const evalRedis = jest.fn<Redis["eval"]>().mockImplementation(async () => [++count, 60000]);
   const limits = createPaymentRateLimits({ eval: evalRedis } as unknown as Redis);
@@ -19,9 +20,9 @@ function setup() {
     next();
   };
   const app = express();
-  app.use("/api/v1/recipients", createRecipientRouter(auth, limits.recipientSearch, { search } as unknown as RecipientService));
+  app.use("/api/v1/recipients", createRecipientRouter(auth, limits.recipientSearch, { search, recent } as unknown as RecipientService));
   app.use(((error, _req, res, _next) => sendError(res, error.message, error.statusCode ?? 500)) as ErrorRequestHandler);
-  return { app, search, evalRedis };
+  return { app, search, recent, evalRedis };
 }
 
 describe("Recipient search HTTP contract", () => {
@@ -74,5 +75,52 @@ describe("Recipient search HTTP contract", () => {
     t.evalRedis.mockRejectedValue(new Error("redis unavailable"));
     await request(t.app).get(path).auth("test", { type: "bearer" }).query({ q: "Sipho" }).expect(503);
     expect(t.search).not.toHaveBeenCalled();
+  });
+});
+
+describe("Recent recipients HTTP contract", () => {
+  const recentPath = "/api/v1/recipients/recent";
+  it("requires authentication before accessing history or the rate limiter", async () => {
+    const t = setup();
+    await request(t.app).get(recentPath).expect(401);
+    expect(t.recent).not.toHaveBeenCalled();
+    expect(t.evalRedis).not.toHaveBeenCalled();
+  });
+  it("returns the standard recipient envelope and default limit", async () => {
+    const t = setup();
+    const recipients = [{ recipientUserId: "recipient", displayName: "Sipho" }];
+    t.recent.mockResolvedValue(recipients);
+    const res = await request(t.app).get(recentPath).auth("test", { type: "bearer" }).expect(200);
+    expect(res.body).toEqual({ success: true, data: recipients });
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.headers["referrer-policy"]).toBe("no-referrer");
+    expect(t.recent).toHaveBeenCalledWith("requester", { limit: 10 });
+    expect(t.search).not.toHaveBeenCalled();
+  });
+  it("returns an empty array and accepts the maximum limit", async () => {
+    const t = setup();
+    const res = await request(t.app).get(recentPath).auth("test", { type: "bearer" }).query({ limit: "20" }).expect(200);
+    expect(res.body.data).toEqual([]);
+    expect(t.recent).toHaveBeenCalledWith("requester", { limit: 20 });
+  });
+  it.each([{ limit: "0" }, { limit: "21" }, { limit: "1.5" }, { limit: "abc" },
+    { limit: ["1", "2"] }, { userId: "other" }, { q: "Sipho" }, { offset: "1" }])(
+    "rejects invalid or caller-selected history parameters %j", async (query) => {
+      const t = setup();
+      await request(t.app).get(recentPath).auth("test", { type: "bearer" }).query(query).expect(400);
+      expect(t.recent).not.toHaveBeenCalled();
+    });
+  it("shares the recipient search rate limit", async () => {
+    const t = setup();
+    for (let i = 0; i < 30; i++) await request(t.app).get(path).auth("test", { type: "bearer" }).query({ q: "Sipho" }).expect(200);
+    const res = await request(t.app).get(recentPath).auth("test", { type: "bearer" }).expect(429);
+    expect(res.headers["retry-after"]).toBe("60");
+    expect(t.recent).not.toHaveBeenCalled();
+  });
+  it("fails closed if the rate limiter is unavailable", async () => {
+    const t = setup();
+    t.evalRedis.mockRejectedValue(new Error("redis unavailable"));
+    await request(t.app).get(recentPath).auth("test", { type: "bearer" }).expect(503);
+    expect(t.recent).not.toHaveBeenCalled();
   });
 });

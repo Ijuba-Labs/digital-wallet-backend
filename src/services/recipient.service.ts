@@ -1,10 +1,14 @@
 import { z } from "zod";
 import type { RecipientRepository, RecipientSearch } from "@/repositories/recipient.repository";
-import type { RecipientSearchInput } from "@/validators/recipient.validator";
+import type { RecipientSearchInput, RecentRecipientsInput } from "@/validators/recipient.validator";
 import { AppError } from "@/utils/appError";
 
 export class RecipientService {
-  constructor(private readonly repository: Pick<RecipientRepository, "search">) {}
+  constructor(private readonly repository: Pick<RecipientRepository, "search" | "recent">) {}
+
+  async recent(userId: string, input: RecentRecipientsInput) {
+    return this.repository.recent(userId, input.limit);
+  }
 
   async search(userId: string, input: RecipientSearchInput) {
     const value = input.q.replace(/\s+/g, " ");

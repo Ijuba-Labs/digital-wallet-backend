@@ -6,3 +6,6 @@ export const recipientSearchSchema = z.object({
 }).strict();
 
 export type RecipientSearchInput = z.infer<typeof recipientSearchSchema>;
+
+export const recentRecipientsSchema = recipientSearchSchema.pick({ limit: true }).strict();
+export type RecentRecipientsInput = z.infer<typeof recentRecipientsSchema>;

@@ -1,3 +1,4 @@
+import { appReturnDestination, validateAppReturnUrl } from "@/utils/app-return";
 import type { Request, Response, NextFunction } from "express";
 import type { ZodType } from "zod";
 import type { TransferService } from "@/services/transfer.service";
@@ -19,7 +20,9 @@ const userId = (req: Request): string => {
 };
 
 export class TransferController {
-  constructor(private readonly service: Pick<TransferService, "create" | "handleCallback" | "handleDecline" | "get" | "list" | "cancel" | "cancelByKey">) {}
+  constructor(private readonly service: Pick<TransferService, "create" | "handleCallback" | "handleDecline" | "get" | "list" | "cancel" | "cancelByKey">, private readonly returnUrl: string | null = null) {
+    if (returnUrl) validateAppReturnUrl(returnUrl);
+  }
 
   cancelByKey = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try { sendSuccess(res, await this.service.cancelByKey(userId(req), parse(idempotencyKeySchema, req.get("Idempotency-Key")))); }
@@ -68,6 +71,13 @@ export class TransferController {
           const query = parse(transferCallbackSchema, req.query);
           return this.service.handleCallback(query.transfer_id, query.interact_ref, query.hash);
         })();
+      // A provider wait before recording consent still needs this proof-bearing URL.
+      if (this.returnUrl && result.status !== "AWAITING_AUTHORIZATION") {
+        res.redirect(302, appReturnDestination(this.returnUrl, { transfer_id: result.transferId }));
+        return;
+      }
+      if (result.status === "AWAITING_AUTHORIZATION")
+        res.setHeader("Refresh", String(("retryAfter" in result ? result.retryAfter : undefined) ?? 2));
       const processing = ["AWAITING_AUTHORIZATION", "FINALIZING", "SUBMITTING"].includes(result.status);
       if (processing) res.setHeader("Retry-After", String(("retryAfter" in result ? result.retryAfter : undefined) ?? 2));
       if (result.status === "CANCELLED") {

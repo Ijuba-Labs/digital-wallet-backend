@@ -8,6 +8,7 @@
  * 3. Provide sensible defaults for local development where appropriate.
  * 4. Export a frozen, strongly-typed `config` object rather than accessing `process.env` arbitrarily across the codebase.
  */
+import { validateAppReturnUrl } from "@/utils/app-return";
 import dotenv from "dotenv";
 import { z } from "zod";
 
@@ -27,7 +28,8 @@ const envSchema = z.object({
     (value) => value ?? process.env.SESSION_TTL_MS ?? 15,
     z.coerce.number().int().min(1).max(60)),
   ONBOARDING_WEB_RETURN_URL: z.preprocess((value) => value === "" ? undefined : value, z.url().optional()),
-  ONBOARDING_MOBILE_RETURN_URL: z.preprocess((value) => value === "" ? undefined : value, z.url().optional()),
+  ONBOARDING_MOBILE_RETURN_URL: z.preprocess((value) => value === "" ? undefined : value, z.string().default("ijubapay://approval/wallet").transform(validateAppReturnUrl)),
+  TRANSFER_APP_RETURN_URL: z.preprocess((value) => value === "" ? undefined : value, z.string().default("ijubapay://approval/transfer").transform(validateAppReturnUrl)),
   REDIS_URL: z.string().default("redis://shared-redis:6379"),
   REDIS_HOST: z.string().default("shared-redis"),
   DATABASE_URL: z.url("DATABASE_URL must be a valid connection string"),

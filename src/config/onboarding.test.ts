@@ -26,7 +26,11 @@ describe("Onboarding destinations", () => {
     expect(() => createOnboardingConfig({ apiPublicUrl: "https://api.example.com", webReturnUrl })).toThrow();
   });
 
-  it("requires HTTPS app links for mobile even in development", () => {
+  it("accepts the registered custom mobile deep link", () => {
+    expect(createOnboardingConfig({ apiPublicUrl: "https://api.example.com", mobileReturnUrl: "ijubapay://approval/wallet" }).returnUrls.mobile).toBe("ijubapay://approval/wallet");
+  });
+
+  it("rejects unregistered mobile schemes and HTTP even in development", () => {
     for (const mobileReturnUrl of ["wallet://onboarding", "http://localhost:3000/return"]) {
       expect(() => createOnboardingConfig({
         apiPublicUrl: "http://localhost:9001", allowLocalHttp: true, mobileReturnUrl,

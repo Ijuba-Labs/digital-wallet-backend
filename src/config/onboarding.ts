@@ -1,3 +1,4 @@
+import { validateAppReturnUrl } from "@/utils/app-return";
 import { AppError } from "@/utils/appError";
 
 export type OnboardingClientId = "api" | "web" | "mobile";
@@ -34,7 +35,7 @@ export const createOnboardingConfig = (input: {
     returnUrls.web = validateUrl(input.webReturnUrl, "ONBOARDING_WEB_RETURN_URL", input.allowLocalHttp ?? false).href;
   }
   if (input.mobileReturnUrl) {
-    returnUrls.mobile = validateUrl(input.mobileReturnUrl, "ONBOARDING_MOBILE_RETURN_URL", false).href;
+    returnUrls.mobile = validateAppReturnUrl(input.mobileReturnUrl);
   }
   return { apiPublicUrl: api.origin, returnUrls: Object.freeze(returnUrls) };
 };

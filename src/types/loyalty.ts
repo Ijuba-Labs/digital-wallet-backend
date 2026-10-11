@@ -50,19 +50,26 @@ export const programConfigurationSchema = z.object({
   }
 });
 const unit = z.number().min(0).max(1);
+const material = z.enum(["FLAT", "MATTE_PLASTIC", "GLOSSY_PLASTIC"]).optional();
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 export const cardTemplateSchema = z.object({
   aspectRatio: z.number().min(0.5).max(3),
+  cornerRadius: unit.max(0.2).optional(),
+  brand: z.object({ text: z.string().trim().min(1).max(80), x: unit, y: unit,
+    width: unit.gt(0), height: unit.gt(0), color,
+    fontSize: z.number().min(0.02).max(0.3), letterSpacing: unit.max(0.3).optional(),
+    fontFamily: z.enum(["DEFAULT", "CONDENSED"]).optional() }).strict().optional(),
+  stripes: z.object({ color, opacity: unit.max(0.25), count: z.number().int().min(2).max(12) }).strict().optional(),
   background: z.discriminatedUnion("type", [
-    z.object({ type: z.literal("solid"), colors: z.array(color).length(1) }).strict(),
-    z.object({ type: z.literal("gradient"), colors: z.array(color).min(2).max(4) }).strict(),
-    z.object({ type: z.literal("asset"), assetUrl: httpsUrl }).strict(),
+    z.object({ type: z.literal("solid"), colors: z.array(color).length(1), material }).strict(),
+    z.object({ type: z.literal("gradient"), colors: z.array(color).min(2).max(4), material }).strict(),
+    z.object({ type: z.literal("asset"), assetUrl: httpsUrl, material }).strict(),
   ]),
   logo: z.object({ assetUrl: httpsUrl, x: unit, y: unit, width: unit.gt(0), height: unit.gt(0) }).strict().optional(),
-  barcode: z.object({ x: unit, y: unit, width: unit.gt(0), height: unit.gt(0), backgroundColor: z.literal("#FFFFFF"), foregroundColor: z.literal("#000000"), showNumber: z.boolean() }).strict(),
+  barcode: z.object({ x: unit, y: unit, width: unit.gt(0), height: unit.gt(0), backgroundColor: z.literal("#FFFFFF"), foregroundColor: z.literal("#000000"), showNumber: z.boolean(), cornerRadius: unit.max(0.2).optional(), numberGroupSize: z.number().int().min(1).max(8).optional() }).strict(),
   attribution: z.string().max(500).optional(),
 }).strict().superRefine((t, ctx) => {
-  for (const [key, box] of Object.entries({ barcode: t.barcode, logo: t.logo })) {
+  for (const [key, box] of Object.entries({ barcode: t.barcode, logo: t.logo, brand: t.brand })) {
     if (box && (box.x + box.width > 1 + 1e-9 || box.y + box.height > 1 + 1e-9)) ctx.addIssue({ code: "custom", path: [key], message: "Template region exceeds card bounds" });
   }
 });

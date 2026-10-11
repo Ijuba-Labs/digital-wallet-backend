@@ -98,7 +98,7 @@ export const createApp = ({ db, redis }: AppDependencies): Application => {
     consumeWalletLimit: rateLimits.wallet,
     apiPublicUrl: env.API_PUBLIC_URL,
   });
-  const transferController = new TransferController(transferService);
+  const transferController = new TransferController(transferService, env.TRANSFER_APP_RETURN_URL);
 
   // Generic customer identity delegation; no application JWT secret leaves this service.
   app.get("/api/v1/identity", requireAuth, (req, res) => { res.json({ customerId: req.user!.id }); });

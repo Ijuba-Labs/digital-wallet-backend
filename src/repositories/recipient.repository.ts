@@ -13,6 +13,23 @@ const prefix = (value: string) => value.replace(/[\\%_]/g, "\\$&") + "%";
 export class RecipientRepository {
   constructor(private readonly db: Knex) {}
 
+  async recent(requesterId: string, limit: number): Promise<Recipient[]> {
+    const history = this.db("transfers")
+      .where({ sender_user_id: requesterId, status: "COMPLETED" })
+      .select("recipient_user_id")
+      .max({ last_sent_at: this.db.raw("coalesce(completed_at, created_at)") })
+      .groupBy("recipient_user_id").as("recent");
+
+    return this.db("users as u")
+      .join(history, "recent.recipient_user_id", "u.id")
+      .where("u.status", "ACTIVE").whereNot("u.id", requesterId)
+      .whereExists(this.db("wallets as w").select(this.db.raw("1"))
+        .whereRaw("w.user_id = u.id").andWhere("w.status", "LINKED").whereNotNull("w.verified_at"))
+      .select("u.id as recipientUserId",
+        this.db.raw("coalesce(nullif(trim(concat_ws(' ', trim(u.first_name), trim(u.last_name))), ''), 'Recipient') as \"displayName\""))
+      .orderBy("recent.last_sent_at", "desc").orderBy("u.id", "asc").limit(limit);
+  }
+
   async search(requesterId: string, search: RecipientSearch, limit: number): Promise<Recipient[]> {
     const query = this.db("users as u").where("u.status", "ACTIVE").whereNot("u.id", requesterId)
       .whereExists(this.db("wallets as w").select(this.db.raw("1")).whereRaw("w.user_id = u.id")

@@ -39,7 +39,7 @@
     "localenv:migrate-to-local": "bash scripts/migrate-to-local.sh",
     "source:archive": "node scripts/source-archive.mjs",
     "secrets:scan": "node scripts/scan-secrets.mjs",
-    "test:payments": "pnpm build && node --import ./tests/env.setup.ts --test tests/payment-regression.test.mjs tests/payment-status-regression.test.mjs tests/payment-cancellation-regression.test.mjs",
+    "test:payments": "pnpm build && node --import ./tests/env.setup.ts --test tests/payment-regression.test.mjs tests/payment-status-regression.test.mjs tests/payment-cancellation-regression.test.mjs tests/approval-return-regression.test.mjs",
     "test:loyalty:unit": "NODE_OPTIONS='--experimental-vm-modules' jest --config jest.loyalty-unit.config.cjs --runInBand",
     "test:loyalty": "pnpm test:loyalty:unit && NODE_OPTIONS='--experimental-vm-modules' jest --config jest.loyalty.config.cjs --runInBand"
   },

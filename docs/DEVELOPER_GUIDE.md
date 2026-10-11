@@ -218,6 +218,27 @@ an unavailable rate limiter returns `503`. `pnpm test:recipients` runs the
 HTTP and service tests without Docker; the repository tests run with the normal
 PostgreSQL-backed `pnpm test` suite. No schema migration is required.
 
+### Recent recipients
+
+```http
+GET /api/v1/recipients/recent?limit=10
+Authorization: Bearer <access-token>
+```
+
+Returns the same `{ "success": true, "data": [{ "recipientUserId": "...", "displayName": "..." }] }`
+envelope as recipient search. Results are unique recipients of the authenticated
+user's completed outgoing transfers, ordered by latest completion time (creation
+time for legacy rows without a completion timestamp), with recipient ID as the
+tie-breaker. Pending, failed, cancelled, incoming, and other users' transfers do
+not contribute. Recipients must still be active with a verified linked wallet.
+No history returns an empty array. No contact details or transfer data are exposed.
+
+`limit` defaults to 10 and accepts 1–20; other query parameters are rejected.
+Authentication, no-store headers, and the shared 30 requests/minute recipient
+search rate limit apply. Invalid parameters return `400`, missing authentication
+`401`, rate limiting `429`, and unavailable rate limiting `503`. No migration is
+required; the endpoint uses existing transfer history.
+
 ### Cancel or decline a transfer
 
 Only the sender can cancel a persisted transfer:
