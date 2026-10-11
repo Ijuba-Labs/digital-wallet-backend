@@ -10,7 +10,7 @@ const wallet = id => ({ id: `https://provider.example/${id}`, assetCode: 'ZAR', 
 async function fixture(options = {}) {
   const now = new Date();
   const rows = Array.from({ length: options.count ?? 1 }, (_, i) => ({
-    id: `transfer-${i}`, sender_user_id: 'sipho', recipient_user_id: 'patience',
+    id: `transfer-${i}`, sender_user_id: 'sipho', recipient_user_id: 'recipient',
     sender_wallet: wallet('sender'), recipient_wallet: wallet('recipient'),
     status: options.status ?? 'PENDING', debit_amount: amount, receive_amount: amount,
     incoming_payment_url: 'https://provider.example/incoming', quote_url: 'https://provider.example/quote',
@@ -86,7 +86,7 @@ test('history confirms full receipt despite expired sender and legacy unavailabl
 
 test('partial receipt stays pending even when the sender has sent the full amount', async () => {
   const t = await fixture({ received: '500' });
-  const result = await t.service.get('patience', 'transfer-0');
+  const result = await t.service.get('recipient', 'transfer-0');
   assert.equal(result.status, 'PENDING'); assert.equal(result.receivedAmount.value, '500');
   assert.equal(result.sentAmount.value, '1000'); assert.equal(t.calls.submit, 0);
 });
